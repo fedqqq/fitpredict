@@ -13,7 +13,7 @@ judge whether an experiment is scientifically sound.
 
 ## Current Status
 
-P0 Milestone 0 is implemented as a train-only proof of concept.
+P0 Milestone 0 and P1 training lifecycle are implemented.
 
 Implemented:
 
@@ -32,10 +32,16 @@ Implemented:
 - binding engine that builds `callable(**kwargs)` arguments
 - minimal `fit()` training pipeline: config -> data -> split -> Dataset ->
   DataLoader -> model -> binding -> forward -> loss -> backward -> optimizer
+- validation after each epoch
+- dataset-level validation/test metrics with transform pipelines
+- `best.pt` / `last.pt` checkpoints, with best selected only by validation
+  loss or validation metrics
+- final test pass that loads `best.pt` once
+- scheduler stepping on batch, epoch, or metric
+- multiple weighted objectives
 
-The current `fit()` path is train-only. Validation loops, dataset-level metrics,
-best/last checkpoints, schedulers, TensorBoard, MLflow, and final test lifecycle
-belong to later milestones.
+TensorBoard, MLflow, console logging, and prediction/inference lifecycle belong
+to later milestones.
 
 ## Quickstart
 
@@ -89,9 +95,15 @@ training:
           source: targets.label
           dtype: int64
 
-evaluation: {}
+evaluation:
+  metrics: []
 logging: {}
-saving: {}
+saving:
+  output_dir: runs/example
+  save_last: true
+  save_best:
+    monitor: val.loss
+    mode: min
 ```
 
 Make the configured model importable:
