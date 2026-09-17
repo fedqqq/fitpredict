@@ -48,11 +48,7 @@ class DataLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "data.csv"
             path.write_text(
-                "age,income,label\n"
-                "42,1000.5,1\n"
-                "30,850.0,0\n"
-                "25,725.5,1\n"
-                "55,1100.0,0\n",
+                "age,income,label\n42,1000.5,1\n30,850.0,0\n25,725.5,1\n55,1100.0,0\n",
                 encoding="utf-8",
             )
             config = config_for(path)

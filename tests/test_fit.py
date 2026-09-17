@@ -358,7 +358,9 @@ class FitTests(unittest.TestCase):
             config["training"]["objectives"][0]["loss"] = {"name": f"{__name__}:exploding_loss"}
             config["saving"] = {"save_last": False}
 
-            with self.assertRaisesRegex(ConfigError, r"could not call training.objectives\[0\].loss"):
+            with self.assertRaisesRegex(
+                ConfigError, r"could not call training.objectives\[0\].loss"
+            ):
                 fit(config)
 
     def test_model_input_signature_errors_are_config_errors(self):
@@ -1249,8 +1251,7 @@ class FitTests(unittest.TestCase):
 
             resolved_config = json.loads((output_dir / "resolved_config.json").read_text())
             metric_records = [
-                json.loads(line)
-                for line in (output_dir / "metrics.jsonl").read_text().splitlines()
+                json.loads(line) for line in (output_dir / "metrics.jsonl").read_text().splitlines()
             ]
             summary = json.loads((output_dir / "result.json").read_text())
 
@@ -1419,7 +1420,9 @@ class FitTests(unittest.TestCase):
         self.assertEqual(writer.hparams[0][0]["model.params.input_dim"], 2)
         self.assertEqual(fake_mlflow.params[0]["training.total_steps"], 4)
         self.assertEqual(len([name for name, _, _ in writer.scalars if name == "test.loss"]), 1)
-        self.assertEqual(len([name for name, _, _ in fake_mlflow.metrics if name == "test.loss"]), 1)
+        self.assertEqual(
+            len([name for name, _, _ in fake_mlflow.metrics if name == "test.loss"]), 1
+        )
         self.assertEqual(FakeMlflowRun.exits, [None])
 
     def test_fit_logs_to_tensorboard_only_with_fake(self):

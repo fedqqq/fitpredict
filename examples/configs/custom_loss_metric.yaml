@@ -1,0 +1,32 @@
+data:
+  path: examples/data/regression.json
+  format: json
+  features: [x1, x2]
+  targets: [y]
+  split: {train: 0.5, val: 0.3333333333333333, test: 0.16666666666666666, shuffle: false}
+model:
+  class: examples.models:RegressionModel
+  params: {input_dim: "${data.num_features}"}
+  inputs: {x: {source: features, dtype: float32}}
+training:
+  epochs: 2
+  batch_size: 2
+  shuffle: false
+  device: cpu
+  optimizer: {name: SGD, params: {lr: 0.01}}
+  objectives:
+    - loss: {name: examples.models:mae_loss}
+      bindings:
+        input: {source: outputs, dtype: float32}
+        target: {source: targets.y, dtype: float32}
+evaluation:
+  metrics:
+    - name: examples.models:rounded_accuracy
+      bindings:
+        y_pred: {source: outputs, dtype: float32}
+        y_true: {source: targets.y, dtype: float32}
+logging: {console: true, tensorboard: false, mlflow: false}
+saving:
+  output_dir: runs/examples/custom
+  save_last: true
+  save_best: {monitor: val.examples.models:rounded_accuracy, mode: max}

@@ -55,7 +55,9 @@ class SourceResolverTests(unittest.TestCase):
         output = torch.tensor([1.0, 2.0], requires_grad=True)
         binding = BindingConfig(source=BindingSource.parse("outputs"), dtype="float64")
 
-        resolved = resolve_source(binding, RuntimeSourceContext(features={}, targets={}, outputs=output))
+        resolved = resolve_source(
+            binding, RuntimeSourceContext(features={}, targets={}, outputs=output)
+        )
         resolved.sum().backward()
 
         self.assertEqual(resolved.dtype, torch.float64)
@@ -94,7 +96,9 @@ class SourceResolverTests(unittest.TestCase):
             resolve_source("outputs.logits", context)
 
     def test_rejects_bare_outputs_when_model_returned_dictionary(self):
-        context = RuntimeSourceContext(features={}, targets={}, outputs={"logits": torch.ones(2, 1)})
+        context = RuntimeSourceContext(
+            features={}, targets={}, outputs={"logits": torch.ones(2, 1)}
+        )
 
         with self.assertRaisesRegex(ConfigError, "use outputs.<name>"):
             resolve_source("outputs", context)
@@ -106,7 +110,9 @@ class SourceResolverTests(unittest.TestCase):
             resolve_source("outputs.logits", context)
 
     def test_runtime_context_validates_direct_dataclass_inputs(self):
-        with self.assertRaisesRegex(ConfigError, "runtime_context.features.x must be a torch.Tensor"):
+        with self.assertRaisesRegex(
+            ConfigError, "runtime_context.features.x must be a torch.Tensor"
+        ):
             RuntimeSourceContext(features={"x": 1}, targets={})
 
 

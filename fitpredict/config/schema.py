@@ -16,9 +16,7 @@ from fitpredict.config.errors import ConfigError
 
 
 SUPPORTED_DATA_FORMATS = frozenset({"csv", "json", "jsonl", "parquet", "feather"})
-SUPPORTED_DTYPES = frozenset(
-    {"bool", "int64", "float16", "float32", "float64", "auto"}
-)
+SUPPORTED_DTYPES = frozenset({"bool", "int64", "float16", "float32", "float64", "auto"})
 SUPPORTED_DEVICES = frozenset({"cpu", "cuda", "mps", "auto"})
 SCHEDULER_STEP_ON = frozenset({"batch", "epoch", "metric"})
 KNOWN_SCHEDULER_STEP_ON = {
@@ -84,9 +82,7 @@ def _string_list(value: Any, path: str, *, allow_empty: bool = False) -> list[st
     return result
 
 
-def _ensure_no_unknown_keys(
-    raw: Mapping[str, Any], allowed: set[str], path: str
-) -> None:
+def _ensure_no_unknown_keys(raw: Mapping[str, Any], allowed: set[str], path: str) -> None:
     unknown = sorted(set(raw) - allowed)
     if unknown:
         joined = ", ".join(f"{path}.{key}" for key in unknown)
@@ -109,17 +105,13 @@ class BindingSource:
     namespace: str
     name: str | None = None
 
-    VALID_NAMESPACES: ClassVar[frozenset[str]] = frozenset(
-        {"features", "targets", "outputs"}
-    )
+    VALID_NAMESPACES: ClassVar[frozenset[str]] = frozenset({"features", "targets", "outputs"})
 
     @classmethod
     def parse(cls, value: Any, path: str = "source") -> "BindingSource":
         raw = _require_string(value, path)
         if "," in raw or "[" in raw or "]" in raw:
-            raise ConfigError(
-                f"{path} must refer to exactly one source; lists are not supported."
-            )
+            raise ConfigError(f"{path} must refer to exactly one source; lists are not supported.")
 
         parts = raw.split(".")
         if len(parts) > 2 or any(part == "" for part in parts):
@@ -127,9 +119,7 @@ class BindingSource:
 
         namespace = parts[0]
         if namespace not in cls.VALID_NAMESPACES:
-            raise ConfigError(
-                f"{path} must start with one of: features, targets, outputs."
-            )
+            raise ConfigError(f"{path} must start with one of: features, targets, outputs.")
 
         name = parts[1] if len(parts) == 2 else None
         if namespace == "targets" and name is None:
@@ -444,9 +434,7 @@ class SchedulerConfig:
             raise ConfigError(f"{path}.step_on is required for custom schedulers.")
         expected_step_on = KNOWN_SCHEDULER_STEP_ON.get(name)
         if expected_step_on is not None and step_on != expected_step_on:
-            raise ConfigError(
-                f"{path}.step_on for {name} must be {expected_step_on}."
-            )
+            raise ConfigError(f"{path}.step_on for {name} must be {expected_step_on}.")
         monitor = _optional_string(data.get("monitor"), f"{path}.monitor")
         if step_on == "metric" and monitor is None:
             raise ConfigError(f"{path}.monitor is required when step_on is metric.")

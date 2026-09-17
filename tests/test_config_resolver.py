@@ -66,7 +66,9 @@ class ConfigResolverTests(unittest.TestCase):
         raw = valid_config()
         raw["data"]["split"] = {"train": 0.5, "val": 0.5, "test": 0.0}
 
-        config = resolve_config(raw, data_metadata={"num_rows": 3, "columns": ["f1", "f2", "f3", "target"]})
+        config = resolve_config(
+            raw, data_metadata={"num_rows": 3, "columns": ["f1", "f2", "f3", "target"]}
+        )
 
         self.assertEqual(
             (config.data.train_size, config.data.val_size, config.data.test_size),
@@ -74,7 +76,9 @@ class ConfigResolverTests(unittest.TestCase):
         )
 
     def test_freezes_config_deeply(self):
-        config = resolve_config(valid_config(), data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+        config = resolve_config(
+            valid_config(), data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+        )
 
         self.assertIsInstance(config.model.params, FrozenDict)
         with self.assertRaises(TypeError):
@@ -87,7 +91,9 @@ class ConfigResolverTests(unittest.TestCase):
         raw["model"]["params"]["bad"] = "${data.does_not_exist}"
 
         with self.assertRaisesRegex(ConfigError, "unknown config reference"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
     def test_rejects_reference_cycles(self):
         raw = valid_config()
@@ -95,11 +101,15 @@ class ConfigResolverTests(unittest.TestCase):
         raw["model"]["params"]["b"] = "${model.params.a}"
 
         with self.assertRaisesRegex(ConfigError, "reference cycle detected"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
     def test_rejects_metadata_missing_configured_columns(self):
         with self.assertRaisesRegex(ConfigError, "missing configured feature"):
-            resolve_config(valid_config(), data_metadata={"num_rows": 1, "columns": ["f1", "f2", "target"]})
+            resolve_config(
+                valid_config(), data_metadata={"num_rows": 1, "columns": ["f1", "f2", "target"]}
+            )
 
     def test_requires_full_metadata_for_resolution(self):
         with self.assertRaisesRegex(ConfigError, "data_metadata.*required"):
@@ -113,20 +123,26 @@ class ConfigResolverTests(unittest.TestCase):
         raw["model"]["params"]["private"] = "${model.__class__}"
 
         with self.assertRaisesRegex(ConfigError, "non-public path segment"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
         raw = valid_config()
         raw["model"]["params"]["method"] = "${model.from_mapping}"
 
         with self.assertRaisesRegex(ConfigError, "unknown config reference"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
     def test_rejects_invalid_type_after_reference_resolution(self):
         raw = valid_config()
         raw["model"]["class"] = "${training.epochs}"
 
         with self.assertRaisesRegex(ConfigError, "model.class"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
     def test_validates_typed_data_metadata(self):
         metadata = DataMetadata(columns=("f1", "f2", "f3", "target"), num_rows=-10)
@@ -139,13 +155,17 @@ class ConfigResolverTests(unittest.TestCase):
         raw["model"]["inputs"]["x"] = {"source": "features.missing"}
 
         with self.assertRaisesRegex(ConfigError, "unknown feature"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
         raw = valid_config()
         raw["training"]["objectives"][0]["bindings"]["target"] = {"source": "targets.missing"}
 
         with self.assertRaisesRegex(ConfigError, "unknown target"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
     def test_resolver_derives_known_scheduler_step_on_from_helper(self):
         raw = valid_config()
@@ -163,20 +183,26 @@ class ConfigResolverTests(unittest.TestCase):
         raw["saving"] = {"save_best": {"monitor": "test.accuracy", "mode": "max"}}
 
         with self.assertRaisesRegex(ConfigError, "cannot reference test"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
         raw = valid_config()
         raw["evaluation"] = {"metrics": [{"name": "accuracy"}]}
         raw["saving"] = {"save_best": {"monitor": "val.unknown", "mode": "max"}}
 
         with self.assertRaisesRegex(ConfigError, "unknown validation metric"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
         raw = valid_config()
         raw["evaluation"] = {"metrics": [{"name": "accuracy"}]}
         raw["saving"] = {"save_best": {"monitor": "val.accuracy", "mode": "max"}}
 
-        config = resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+        config = resolve_config(
+            raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+        )
 
         self.assertEqual(config.saving.save_best.monitor, "val.accuracy")
 
@@ -188,7 +214,9 @@ class ConfigResolverTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ConfigError, "unknown validation metric"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
         raw = valid_config()
         raw["evaluation"] = {"metrics": [{"name": "accuracy"}]}
@@ -197,7 +225,9 @@ class ConfigResolverTests(unittest.TestCase):
             "monitor": "val.accuracy",
         }
 
-        config = resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+        config = resolve_config(
+            raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+        )
 
         self.assertEqual(config.training.scheduler.monitor, "val.accuracy")
 
@@ -209,7 +239,9 @@ class ConfigResolverTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ConfigError, "cannot reference test"):
-            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+            resolve_config(
+                raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]}
+            )
 
 
 if __name__ == "__main__":

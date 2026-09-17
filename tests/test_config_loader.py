@@ -3,7 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fitpredict.config import ConfigError, ExperimentConfig, load_config, load_config_file, loads_config
+from fitpredict.config import (
+    ConfigError,
+    ExperimentConfig,
+    load_config,
+    load_config_file,
+    loads_config,
+)
 
 
 def valid_config():
@@ -140,7 +146,9 @@ class ConfigLoaderTests(unittest.TestCase):
         config = load_config(valid_config())
 
         self.assertEqual(config.data.features, ("feature_1", "feature_2"))
-        self.assertEqual(config.training.objectives[0].bindings["input"].source.raw, "outputs.logits")
+        self.assertEqual(
+            config.training.objectives[0].bindings["input"].source.raw, "outputs.logits"
+        )
 
     def test_loads_json_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -195,7 +203,9 @@ class ConfigLoaderTests(unittest.TestCase):
         raw = valid_config()
         raw["training"]["epochs"] = "3"
 
-        with self.assertRaisesRegex(ConfigError, "training.epochs must be an integer greater than 0"):
+        with self.assertRaisesRegex(
+            ConfigError, "training.epochs must be an integer greater than 0"
+        ):
             load_config(raw)
 
     def test_malformed_json_is_diagnostic(self):

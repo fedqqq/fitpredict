@@ -160,7 +160,9 @@ def fit(config: str | Path | Mapping[str, Any] | ExperimentConfig) -> FitResult:
                 split_name="val",
             )
             val_losses.append(validation["loss"])
-            val_metrics.append({name: value for name, value in validation.items() if name != "loss"})
+            val_metrics.append(
+                {name: value for name, value in validation.items() if name != "loss"}
+            )
 
             checkpoint_metrics = {
                 "train.loss": epoch_losses[-1],
@@ -398,12 +400,16 @@ class _TrainingRunLogger:
 
     def log_result(self, result: FitResult) -> None:
         summary = {
-            "train.loss": result.history.train_loss[-1] if result.history.train_loss else float("nan"),
+            "train.loss": result.history.train_loss[-1]
+            if result.history.train_loss
+            else float("nan"),
             "val.loss": result.history.val_loss[-1] if result.history.val_loss else float("nan"),
         }
         if result.history.test_loss is not None:
             summary["test.loss"] = result.history.test_loss
-            summary.update({f"test.{name}": value for name, value in result.history.test_metrics.items()})
+            summary.update(
+                {f"test.{name}": value for name, value in result.history.test_metrics.items()}
+            )
         result_path = self.output_dir / "result.json"
         result_path.write_text(
             json.dumps(
@@ -473,8 +479,7 @@ def _instantiate_component(resolution: ComponentResolution, *args: Any) -> Any:
         return resolution.component(*args, **dict(resolution.params or {}))
     except TypeError as exc:
         raise ConfigError(
-            f"could not instantiate {resolution.category} component "
-            f"{resolution.requested!r}: {exc}"
+            f"could not instantiate {resolution.category} component {resolution.requested!r}: {exc}"
         ) from exc
 
 
@@ -957,10 +962,7 @@ def _concat_outputs(values: list[Any]) -> Any:
     if isinstance(first, torch.Tensor):
         return torch.cat(values, dim=0)
     if isinstance(first, Mapping):
-        return {
-            key: _concat_outputs([value[key] for value in values])
-            for key in first
-        }
+        return {key: _concat_outputs([value[key] for value in values]) for key in first}
     return values
 
 

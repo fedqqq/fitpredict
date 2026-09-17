@@ -28,9 +28,7 @@ from fitpredict.config.schema import (
 
 REFERENCE_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}")
 
-COMPONENT_CATEGORIES = frozenset(
-    {"model", "loss", "optimizer", "scheduler", "metric", "transform"}
-)
+COMPONENT_CATEGORIES = frozenset({"model", "loss", "optimizer", "scheduler", "metric", "transform"})
 BUILTIN_SCHEDULER_STEP_ON: Mapping[str, str] = {
     "CosineAnnealingLR": "epoch",
     "CyclicLR": "batch",
@@ -93,14 +91,16 @@ DEFAULT_BUILTINS: Mapping[str, Mapping[str, BuiltinComponent]] = {
         "StepLR": BuiltinComponent("torch.optim.lr_scheduler", "StepLR", "PyTorch"),
     },
     "metric": {
-        "accuracy_score": BuiltinComponent(
-            "sklearn.metrics", "accuracy_score", "scikit-learn"
-        ),
+        "accuracy_score": BuiltinComponent("sklearn.metrics", "accuracy_score", "scikit-learn"),
     },
     "transform": {
         "argmax": BuiltinComponent("fitpredict.config.resolver", "argmax_transform", "fitpredict"),
-        "sigmoid": BuiltinComponent("fitpredict.config.resolver", "sigmoid_transform", "fitpredict"),
-        "softmax": BuiltinComponent("fitpredict.config.resolver", "softmax_transform", "fitpredict"),
+        "sigmoid": BuiltinComponent(
+            "fitpredict.config.resolver", "sigmoid_transform", "fitpredict"
+        ),
+        "softmax": BuiltinComponent(
+            "fitpredict.config.resolver", "softmax_transform", "fitpredict"
+        ),
         "threshold": BuiltinComponent(
             "fitpredict.config.resolver", "threshold_transform", "fitpredict"
         ),
@@ -183,7 +183,9 @@ class ComponentResolver:
                 f"{resolution.requested!r}: {exc}"
             ) from exc
 
-    def scheduler_step_on(self, spec: str | ComponentConfig | Mapping[str, Any] | Any) -> str | None:
+    def scheduler_step_on(
+        self, spec: str | ComponentConfig | Mapping[str, Any] | Any
+    ) -> str | None:
         """Return known scheduler timing without importing framework modules."""
 
         name, _ = _component_name_and_params("scheduler", spec)
@@ -208,8 +210,7 @@ class ComponentResolver:
             ) from exc
         except Exception as exc:
             raise ConfigError(
-                f"cannot resolve built-in {category} component {name!r} from "
-                f"{target.module}: {exc}"
+                f"cannot resolve built-in {category} component {name!r} from {target.module}: {exc}"
             ) from exc
         try:
             return getattr(module, target.attr), target
@@ -359,9 +360,7 @@ def _split_colon_import_path(category: str, path: str) -> tuple[str, str]:
         )
     module_name, attr_path = path.split(":", 1)
     if not module_name or not attr_path or attr_path.startswith(".") or attr_path.endswith("."):
-        raise ConfigError(
-            f"{category} component import path {path!r} must use 'module:attribute'."
-        )
+        raise ConfigError(f"{category} component import path {path!r} must use 'module:attribute'.")
     return module_name, attr_path
 
 
@@ -388,9 +387,7 @@ def _import_custom_module(category: str, requested: str, module_name: str) -> An
 def _resolve_dotted_import_path(category: str, path: str) -> tuple[Any, str, str]:
     parts = path.split(".")
     if len(parts) < 2 or any(part == "" for part in parts):
-        raise ConfigError(
-            f"{category} component import path {path!r} must use 'module.attribute'."
-        )
+        raise ConfigError(f"{category} component import path {path!r} must use 'module.attribute'.")
 
     module_errors: list[str] = []
     attr_errors: list[str] = []
@@ -443,9 +440,7 @@ def _traverse_attr_path(
             current = getattr(current, attr)
         except AttributeError as exc:
             dotted_attr = ".".join(traversed)
-            raise ConfigError(
-                f"{module_name!r} has no attribute {dotted_attr!r}"
-            ) from exc
+            raise ConfigError(f"{module_name!r} has no attribute {dotted_attr!r}") from exc
     return current, module_name, attr_path
 
 
@@ -509,8 +504,11 @@ def _argmax_1d(values: Any) -> int:
 
 
 def _softmax_list(input: Any, dim: int) -> Any:
-    if dim in {-1, 1} and isinstance(input, (list, tuple)) and input and all(
-        isinstance(row, (list, tuple)) for row in input
+    if (
+        dim in {-1, 1}
+        and isinstance(input, (list, tuple))
+        and input
+        and all(isinstance(row, (list, tuple)) for row in input)
     ):
         return [_softmax_1d(row) for row in input]
     if dim in {-1, 0} and isinstance(input, (list, tuple)):
@@ -589,6 +587,8 @@ def _apply_metadata_and_derived_values(
     data_metadata = _normalize_metadata(selected_metadata)
     _validate_metadata(config, data_metadata)
 
+    if data_metadata.num_rows is None:
+        raise ConfigError("data_metadata.num_rows is required for config resolution.")
     train_size, val_size, test_size = _split_sizes(
         data_metadata.num_rows,
         (
@@ -619,9 +619,7 @@ def _apply_metadata_and_derived_values(
 
 def _normalize_metadata(metadata: DataMetadata | Mapping[str, Any] | None) -> DataMetadata:
     if metadata is None:
-        raise ConfigError(
-            "data_metadata with num_rows and columns is required to resolve config."
-        )
+        raise ConfigError("data_metadata with num_rows and columns is required to resolve config.")
     if isinstance(metadata, DataMetadata):
         raw_metadata: Mapping[str, Any] = {
             "columns": metadata.columns,
@@ -669,10 +667,18 @@ def _normalize_metadata(metadata: DataMetadata | Mapping[str, Any] | None) -> Da
 
     return DataMetadata(
         columns=columns,
-        feature_dtypes=_string_mapping(raw_metadata.get("feature_dtypes"), "data_metadata.feature_dtypes"),
-        target_dtypes=_string_mapping(raw_metadata.get("target_dtypes"), "data_metadata.target_dtypes"),
-        feature_shapes=_shape_mapping(raw_metadata.get("feature_shapes"), "data_metadata.feature_shapes"),
-        target_shapes=_shape_mapping(raw_metadata.get("target_shapes"), "data_metadata.target_shapes"),
+        feature_dtypes=_string_mapping(
+            raw_metadata.get("feature_dtypes"), "data_metadata.feature_dtypes"
+        ),
+        target_dtypes=_string_mapping(
+            raw_metadata.get("target_dtypes"), "data_metadata.target_dtypes"
+        ),
+        feature_shapes=_shape_mapping(
+            raw_metadata.get("feature_shapes"), "data_metadata.feature_shapes"
+        ),
+        target_shapes=_shape_mapping(
+            raw_metadata.get("target_shapes"), "data_metadata.target_shapes"
+        ),
         num_rows=num_rows,
     )
 
@@ -734,7 +740,10 @@ def _shape_mapping(value: Any, path: str) -> dict[str, tuple[int, ...]]:
         if not isinstance(shape, Iterable) or isinstance(shape, (str, bytes, Mapping)):
             raise ConfigError(f"{path}.{name} must be a list of non-negative integers.")
         normalized = tuple(shape)
-        if not all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in normalized):
+        if not all(
+            isinstance(item, int) and not isinstance(item, bool) and item >= 0
+            for item in normalized
+        ):
             raise ConfigError(f"{path}.{name} must be a list of non-negative integers.")
         result[name] = normalized
     return result
@@ -792,19 +801,14 @@ class _ReferenceResolver:
             }
             return replace(value, **updates)
         if isinstance(value, Mapping):
-            return {
-                key: self._resolve_value(item, f"{path}.{key}")
-                for key, item in value.items()
-            }
+            return {key: self._resolve_value(item, f"{path}.{key}") for key, item in value.items()}
         if isinstance(value, list):
             return [
-                self._resolve_value(item, f"{path}[{index}]")
-                for index, item in enumerate(value)
+                self._resolve_value(item, f"{path}[{index}]") for index, item in enumerate(value)
             ]
         if isinstance(value, tuple):
             return tuple(
-                self._resolve_value(item, f"{path}[{index}]")
-                for index, item in enumerate(value)
+                self._resolve_value(item, f"{path}[{index}]") for index, item in enumerate(value)
             )
         return value
 
@@ -839,11 +843,15 @@ class _ReferenceResolver:
         traversed: list[str] = []
         for part in dotted_path.split("."):
             if part.startswith("_"):
-                raise ConfigError(f"config reference ${{{dotted_path}}} uses non-public path segment.")
+                raise ConfigError(
+                    f"config reference ${{{dotted_path}}} uses non-public path segment."
+                )
             traversed.append(part)
             if is_dataclass(current) and not isinstance(current, type):
                 field_names = {field.name for field in fields(current)}
-                field_name = "class_path" if part == "class" and "class_path" in field_names else part
+                field_name = (
+                    "class_path" if part == "class" and "class_path" in field_names else part
+                )
                 if field_name not in field_names:
                     raise ConfigError(f"unknown config reference ${{{dotted_path}}}.")
                 current = getattr(current, field_name)
@@ -863,7 +871,9 @@ def _apply_post_reference_defaults(config: ExperimentConfig) -> ExperimentConfig
         return config
 
     if not isinstance(scheduler.name, str) or not scheduler.name:
-        raise ConfigError("training.scheduler.name must be a non-empty string after reference resolution.")
+        raise ConfigError(
+            "training.scheduler.name must be a non-empty string after reference resolution."
+        )
 
     expected_step_on = resolve_builtin_scheduler_step_on(scheduler.name)
     step_on = scheduler.step_on
@@ -894,7 +904,12 @@ def _validate_resolved_config(config: ExperimentConfig) -> None:
     _require_non_negative_int(config.data.train_size, "data.train_size")
     _require_non_negative_int(config.data.val_size, "data.val_size")
     _require_non_negative_int(config.data.test_size, "data.test_size")
-    if config.data.train_size + config.data.val_size + config.data.test_size != config.data.metadata.num_rows:
+    train_size = config.data.train_size
+    val_size = config.data.val_size
+    test_size = config.data.test_size
+    if train_size is None or val_size is None or test_size is None:
+        raise ConfigError("resolved split sizes are required.")
+    if train_size + val_size + test_size != config.data.metadata.num_rows:
         raise ConfigError("resolved split sizes must sum to data_metadata.num_rows.")
 
     _require_non_empty_string(config.model.class_path, "model.class")
@@ -931,7 +946,10 @@ def _validate_scheduler(scheduler: SchedulerConfig | None, config: ExperimentCon
         raise ConfigError("training.scheduler.step_on must be one of: batch, epoch, metric.")
     if scheduler.step_on == "metric":
         _require_non_empty_string(scheduler.monitor, "training.scheduler.monitor")
-        _validate_scheduler_monitor(scheduler.monitor, config)
+        monitor = scheduler.monitor
+        if monitor is None:
+            raise ConfigError("training.scheduler.monitor is required when step_on is metric.")
+        _validate_scheduler_monitor(monitor, config)
 
 
 def _validate_scheduler_monitor(monitor: str, config: ExperimentConfig) -> None:
@@ -959,7 +977,9 @@ def _validate_metric_config(metric: MetricConfig, config: ExperimentConfig, path
         _validate_transform_config(transform, config, f"{path}.transform[{index}]")
 
 
-def _validate_transform_config(transform: TransformConfig, config: ExperimentConfig, path: str) -> None:
+def _validate_transform_config(
+    transform: TransformConfig, config: ExperimentConfig, path: str
+) -> None:
     _require_non_empty_string(transform.name, f"{path}.name")
     _require_mapping_instance(transform.params, f"{path}.params")
     _validate_bindings(transform.bindings, config, f"{path}.bindings")
@@ -996,7 +1016,9 @@ def _validate_save_best(save_best: SaveBestConfig | None, config: ExperimentConf
     if save_best.monitor.startswith("test."):
         raise ConfigError("saving.save_best.monitor cannot reference test metrics.")
     if not save_best.monitor.startswith("val."):
-        raise ConfigError("saving.save_best.monitor must reference val.loss or a configured val metric.")
+        raise ConfigError(
+            "saving.save_best.monitor must reference val.loss or a configured val metric."
+        )
     metric_name = save_best.monitor.removeprefix("val.")
     if metric_name == "loss":
         return

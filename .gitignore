@@ -1,3 +1,19 @@
+# Development plans and private project notes
+backlog.md
+specification.md
+.agents/
+.codex/
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
@@ -13,25 +29,15 @@ htmlcov/
 .venv/
 venv/
 env/
-.env/
 
 # Build and packaging outputs
 build/
 dist/
 *.egg-info/
 .eggs/
+*.egg
 
-# Local environment files
-.env
-.env.*
-!.env.example
-
-# IDE and OS files
-.DS_Store
-.idea/
-.vscode/
-
-# Logs and experiment outputs
+# Logs and local experiment outputs
 logs/
 runs/
 mlruns/
@@ -43,12 +49,17 @@ checkpoints/
 *.pt
 *.pth
 *.ckpt
+*.onnx
 
 # Local data artifacts
 /data/
 *.parquet
 *.feather
+*.sqlite
+*.sqlite3
+*.db
 
-# Secrets
-backlog.md
-specification.md
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/

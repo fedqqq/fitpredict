@@ -73,7 +73,9 @@ def load_data_metadata(
     from the config. For path-based calls, pass ``features`` and ``targets``.
     """
 
-    declared_features = tuple(data.features) if isinstance(data, DataConfig) else tuple(features or ())
+    declared_features = (
+        tuple(data.features) if isinstance(data, DataConfig) else tuple(features or ())
+    )
     declared_targets = tuple(data.targets) if isinstance(data, DataConfig) else tuple(targets or ())
     loaded = load_tabular_data(data, format=format, options=options)
     return metadata_from_rows(
@@ -94,17 +96,13 @@ def metadata_from_rows(
     """Derive resolver-compatible metadata from already loaded row mappings."""
 
     materialized_rows = tuple(rows)
-    inferred_columns = tuple(columns) if columns is not None else _columns_from_rows(materialized_rows)
+    inferred_columns = (
+        tuple(columns) if columns is not None else _columns_from_rows(materialized_rows)
+    )
     _validate_declared_columns(inferred_columns, features, targets)
 
-    feature_dtypes = {
-        name: _infer_column_dtype(materialized_rows, name)
-        for name in features
-    }
-    target_dtypes = {
-        name: _infer_column_dtype(materialized_rows, name)
-        for name in targets
-    }
+    feature_dtypes = {name: _infer_column_dtype(materialized_rows, name) for name in features}
+    target_dtypes = {name: _infer_column_dtype(materialized_rows, name) for name in targets}
     feature_shapes = _known_column_shapes(materialized_rows, features)
     target_shapes = _known_column_shapes(materialized_rows, targets)
     return DataMetadata(
@@ -183,7 +181,9 @@ def _load_json(path: Path, options: Mapping[str, Any]) -> TabularRows:
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ConfigError(f"malformed json data file {path}: {exc.msg} at line {exc.lineno}") from exc
+        raise ConfigError(
+            f"malformed json data file {path}: {exc.msg} at line {exc.lineno}"
+        ) from exc
     if not isinstance(value, list):
         raise ConfigError(f"json data file {path} must contain a list of row objects.")
     rows = tuple(_require_row_mapping(row, f"{path}[{index}]") for index, row in enumerate(value))
@@ -293,13 +293,11 @@ def _validate_declared_columns(
     missing_targets = sorted(set(targets) - available)
     if missing_features:
         raise ConfigError(
-            "data columns are missing configured feature(s): "
-            + ", ".join(missing_features)
+            "data columns are missing configured feature(s): " + ", ".join(missing_features)
         )
     if missing_targets:
         raise ConfigError(
-            "data columns are missing configured target(s): "
-            + ", ".join(missing_targets)
+            "data columns are missing configured target(s): " + ", ".join(missing_targets)
         )
 
 
@@ -380,8 +378,7 @@ def _reject_unknown_options(
     unknown = sorted(set(options) - allowed)
     if unknown:
         raise ConfigError(
-            f"data.options contains unsupported {format_name} option(s): "
-            + ", ".join(unknown)
+            f"data.options contains unsupported {format_name} option(s): " + ", ".join(unknown)
         )
 
 

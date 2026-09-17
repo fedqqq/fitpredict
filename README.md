@@ -1,67 +1,66 @@
 # fitpredict
 
-fitpredict is a small declarative layer on top of PyTorch for tabular experiments.
+fitpredict is a small declarative layer on top of PyTorch for tabular machine learning experiments.
 
-The project goal is that a user writes a model and a YAML or JSON config, while
-fitpredict owns the experiment plumbing: config validation, data loading,
-splitting, tensorization, generic Dataset/DataLoader construction, and runtime
-binding from data/model outputs into callables.
+You write two things:
 
-fitpredict is not AutoML. It checks whether a config can be executed; it does
-not choose features, clean data, prevent leakage, tune hyperparameters, or
-judge whether an experiment is scientifically sound.
+1. a normal `torch.nn.Module`;
+2. a YAML or JSON config that describes data, training, evaluation, logging, and saving.
 
-## Current Status
+fitpredict handles the experiment plumbing: config validation, data loading, train/validation/test split, tensorization, generic `Dataset` / `DataLoader`, training loop, validation, metrics, checkpoints, logging, and prediction.
 
-P0 Milestone 0, P1 training lifecycle, and P2 experiment infrastructure are implemented.
+fitpredict is not AutoML. It checks that your config can run; it does not choose features, clean data, tune hyperparameters, or judge whether an experiment is scientifically correct.
 
-Implemented:
+## Install
 
-- typed six-section config schema: `data`, `model`, `training`, `evaluation`,
-  `logging`, `saving`
-- JSON/YAML config loading
-- config resolution with defaults, data metadata, derived values, references,
-  component resolution, and freezing
-- tabular data loading for `csv`, `json`, `jsonl`, plus `parquet` and `feather`
-  when `pyarrow` is installed
-- train/validation/test splitting from config
-- tensorization and the generic sample contract
-  `{"features": {...}, "targets": {...}}`
-- source resolution for `features`, `features.<name>`, `targets.<name>`,
-  `outputs`, and `outputs.<name>`
-- binding engine that builds `callable(**kwargs)` arguments
-- minimal `fit()` training pipeline: config -> data -> split -> Dataset ->
-  DataLoader -> model -> binding -> forward -> loss -> backward -> optimizer
-- validation after each epoch
-- dataset-level validation/test metrics with transform pipelines
-- `best.pt` / `last.pt` checkpoints, with best selected only by validation
-  loss or validation metrics
-- final test pass that loads `best.pt` once
-- scheduler stepping on batch, epoch, or metric
-- multiple weighted objectives
-- console logging plus resolved config, metric, and result artifacts in
-  `saving.output_dir`
-- TensorBoard and MLflow parameter/metric logging when enabled
-- minimal `predict()` inference pipeline:
-  config -> metadata/resolve -> prediction data -> Dataset -> DataLoader ->
-  model -> checkpoint or `model.weights` -> bound forward pass -> detached CPU
-  predictions
+From PyPI:
 
-TensorBoard and MLflow are optional runtime integrations. If either backend is
-enabled in config but the package is not installed, `fit()` raises a clear
-configuration error.
+```bash
+pip install fitpredict
+```
 
-## Quickstart
+For TestPyPI verification:
 
-Install dependencies:
+```bash
+pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ fitpredict==1.0.1
+```
+
+For local development from this repository:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+pip install -e '.[dev]'
 ```
 
-Create a minimal config:
+Supported Python versions: 3.11 and 3.12.
+
+## First experiment
+
+Create data as JSONL, CSV, JSON, parquet, or feather. Example `data/train.jsonl`:
+
+```jsonl
+{"age": 21, "income": 40000, "label": 0}
+{"age": 42, "income": 90000, "label": 1}
+```
+
+Create a model importable from Python:
+
+```python
+# models.py
+import torch.nn as nn
+
+
+class Classifier(nn.Module):
+    def __init__(self, input_dim: int):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, 2)
+
+    def forward(self, x):
+        return {"logits": self.linear(x)}
+```
+
+Create `config.yaml`:
 
 ```yaml
 data:
@@ -105,10 +104,12 @@ training:
 
 evaluation:
   metrics: []
+
 logging:
   console: true
   tensorboard: false
   mlflow: false
+
 saving:
   output_dir: runs/example
   save_last: true
@@ -117,23 +118,7 @@ saving:
     mode: min
 ```
 
-Make the configured model importable:
-
-```python
-# models.py
-import torch.nn as nn
-
-
-class Classifier(nn.Module):
-    def __init__(self, input_dim: int):
-        super().__init__()
-        self.linear = nn.Linear(input_dim, 2)
-
-    def forward(self, x):
-        return {"logits": self.linear(x)}
-```
-
-Run training:
+Train:
 
 ```python
 from fitpredict import fit
@@ -142,27 +127,20 @@ result = fit("config.yaml")
 print(result.history.train_loss)
 ```
 
-Run inference:
+Run prediction:
 
 ```python
 from fitpredict import predict
 
-predictions = predict("config.yaml", checkpoint="runs/example/best.pt", data="predict.jsonl")
+predictions = predict("config.yaml", checkpoint="runs/example/best.pt", data="data/predict.jsonl")
 print(predictions)
 ```
 
-`predict()` returns the model output shape directly: a single tensor stays a
-tensor, and a dictionary output stays a dictionary of tensors. Prediction rows
-only need the configured feature columns; target columns used for training
-losses or metrics are not required. Empty prediction data returns `None`.
-Tensor outputs must include a leading batch dimension; scalar tensor outputs are
-rejected. If neither `checkpoint` nor `model.weights` is set, prediction uses a
-freshly initialized configured model.
-
+Prediction rows only need the configured feature columns. Target columns are required for training losses or metrics, but not for inference.
 
 ## Public API
 
-Application code should import from the root package:
+Use root package imports in application code:
 
 ```python
 from fitpredict import (
@@ -177,27 +155,38 @@ from fitpredict import (
 )
 ```
 
-The stable user-facing entry points are:
+Stable entry points:
 
-- `fit(config)` — train an experiment from a path, raw JSON/YAML string, mapping, or `ExperimentConfig`.
-- `predict(config, checkpoint=None, data=None)` — run inference for the configured model.
-- `load_config(source)`, `load_config_file(path)`, `loads_config(text, format=None)` — load typed config objects.
-- `resolve_config(config, data_metadata=...)` — resolve defaults, metadata-derived fields, and config references.
-- `ConfigError` — configuration and runtime-contract errors intended to be shown to users.
-- `ExperimentConfig` — the typed config object returned by config loading.
+- `fit(config)` trains an experiment from a path, raw JSON/YAML string, mapping, or `ExperimentConfig`.
+- `predict(config, checkpoint=None, data=None)` runs inference for the configured model.
+- `load_config`, `load_config_file`, and `loads_config` load typed config objects.
+- `resolve_config` resolves defaults, data metadata, references, and components.
+- `ConfigError` is the user-facing error type for configuration and runtime contract problems.
 
-Lower-level modules under `fitpredict.config`, `fitpredict.data`, and `fitpredict.binding` are implementation and extension helpers. They are tested for this repository, but user projects should prefer the root imports above.
+## Documentation and examples
 
-## Tests
+- [Quickstart](docs/quickstart.md)
+- [Config reference](docs/config-reference.md)
+- [Binding reference](docs/bindings.md)
+- [Runnable examples](examples/README.md)
+- [Release process](docs/release.md)
+- [Changelog](CHANGELOG.md)
 
-Run the test suite:
+Run bundled examples from the repository root:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+python examples/run_fit.py examples/configs/classification.yaml
+python examples/run_predict.py examples/configs/classification.yaml examples/data/predict.json
 ```
 
-Run a syntax check:
+## Development checks
 
 ```bash
-.venv/bin/python -m compileall fitpredict tests
+python -m ruff check fitpredict tests examples scripts
+python -m ruff format --check fitpredict tests examples scripts
+python -m mypy fitpredict
+python -m pytest -q
+python -m compileall -q fitpredict tests examples scripts
+python -m build
+python scripts/check_version.py
 ```

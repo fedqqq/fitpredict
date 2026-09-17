@@ -93,7 +93,9 @@ class SourceResolver:
             binding_dtype = source.dtype
             parsed = source.source
         else:
-            parsed = source if isinstance(source, BindingSource) else BindingSource.parse(source, path)
+            parsed = (
+                source if isinstance(source, BindingSource) else BindingSource.parse(source, path)
+            )
         selected_dtype = dtype if dtype is not None else binding_dtype
 
         if parsed.is_feature_aggregate:
@@ -193,11 +195,15 @@ def _resolve_named_tensor(
     if name is None:
         raise ConfigError(f'{path} source "{namespace}" must name a tensor.')
     if name not in declared:
-        raise ConfigError(f'{path} source "{namespace}.{name}" is not declared in data.{namespace}.')
+        raise ConfigError(
+            f'{path} source "{namespace}.{name}" is not declared in data.{namespace}.'
+        )
     try:
         return tensors[name]
     except KeyError as exc:
-        raise ConfigError(f'{path} source "{namespace}.{name}" is missing from runtime context.') from exc
+        raise ConfigError(
+            f'{path} source "{namespace}.{name}" is missing from runtime context.'
+        ) from exc
 
 
 def _resolve_output(outputs: Any, source: BindingSource, path: str) -> torch.Tensor:
@@ -214,9 +220,7 @@ def _resolve_output(outputs: Any, source: BindingSource, path: str) -> torch.Ten
         )
 
     if not isinstance(outputs, Mapping):
-        raise ConfigError(
-            f'{path} source "{source}" requires model outputs to be a dictionary.'
-        )
+        raise ConfigError(f'{path} source "{source}" requires model outputs to be a dictionary.')
     if source.name not in outputs:
         raise ConfigError(f'{path} source "{source}" is missing from model outputs.')
     tensor = outputs[source.name]

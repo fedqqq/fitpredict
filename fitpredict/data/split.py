@@ -57,9 +57,10 @@ def split_tabular_data(
 
     indices = list(range(len(loaded.rows)))
     if split_config.sort_by is not None:
+        sort_by = split_config.sort_by
         try:
             indices.sort(
-                key=lambda index: _sort_key(loaded.rows[index], split_config.sort_by),
+                key=lambda index: _sort_key(loaded.rows[index], sort_by),
                 reverse=not split_config.ascending,
             )
         except TypeError as exc:
@@ -157,11 +158,11 @@ def _partition_indices(
     if split.stratify is None:
         train_size, val_size, _ = sizes
         return (
-            [
+            (
                 list(indices[:train_size]),
                 list(indices[train_size : train_size + val_size]),
                 list(indices[train_size + val_size :]),
-            ],
+            ),
             {},
         )
 
@@ -202,8 +203,7 @@ def _stratified_partition(
             remaining[selected] -= 1
             assigned_in_group[selected] += 1
         diagnostics[group_key] = {
-            name: assigned_in_group[position]
-            for position, name in enumerate(SPLIT_NAMES)
+            name: assigned_in_group[position] for position, name in enumerate(SPLIT_NAMES)
         }
 
     if remaining != [0, 0, 0]:

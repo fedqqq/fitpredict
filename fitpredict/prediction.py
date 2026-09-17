@@ -134,7 +134,9 @@ def _prediction_metadata(config: ExperimentConfig, rows: TabularRows) -> DataMet
         features=config.data.features,
         targets=(),
     )
-    missing_targets = tuple(target for target in config.data.targets if target not in metadata.columns)
+    missing_targets = tuple(
+        target for target in config.data.targets if target not in metadata.columns
+    )
     if not missing_targets:
         return metadata
     return replace(
@@ -160,9 +162,7 @@ def _validate_prediction_output(value: Any, *, path: str) -> None:
                 raise ConfigError(f"{path} keys must be non-empty strings.")
             _validate_prediction_output(item, path=f"{path}.{key}")
         return
-    raise ConfigError(
-        f"{path} must be a torch.Tensor or a mapping of torch.Tensor values."
-    )
+    raise ConfigError(f"{path} must be a torch.Tensor or a mapping of torch.Tensor values.")
 
 
 def _columns_from_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[str, ...]:

@@ -62,7 +62,9 @@ class TabularDataset(Dataset):
         self._rows = _normalize_rows(rows, columns)
         self.features = _declared("features", data.features if data is not None else features)
         self.targets = _declared("targets", data.targets if data is not None else targets)
-        self.metadata = metadata if metadata is not None else data.metadata if data is not None else None
+        self.metadata = (
+            metadata if metadata is not None else data.metadata if data is not None else None
+        )
         _validate_declared_columns(self._rows.columns, self.features, self.targets)
 
         self._feature_tensors = self._tensorize_namespace("features", self.features)
@@ -94,14 +96,8 @@ class TabularDataset(Dataset):
         if index < 0 or index >= len(self):
             raise IndexError("tabular dataset index out of range")
         return {
-            "features": {
-                name: tensor[index]
-                for name, tensor in self._feature_tensors.items()
-            },
-            "targets": {
-                name: tensor[index]
-                for name, tensor in self._target_tensors.items()
-            },
+            "features": {name: tensor[index] for name, tensor in self._feature_tensors.items()},
+            "targets": {name: tensor[index] for name, tensor in self._target_tensors.items()},
         }
 
     def _tensorize_namespace(
@@ -193,13 +189,11 @@ def _validate_declared_columns(
     missing_targets = sorted(set(targets) - available)
     if missing_features:
         raise ConfigError(
-            "data columns are missing configured feature(s): "
-            + ", ".join(missing_features)
+            "data columns are missing configured feature(s): " + ", ".join(missing_features)
         )
     if missing_targets:
         raise ConfigError(
-            "data columns are missing configured target(s): "
-            + ", ".join(missing_targets)
+            "data columns are missing configured target(s): " + ", ".join(missing_targets)
         )
 
 

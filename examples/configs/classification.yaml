@@ -1,0 +1,27 @@
+data:
+  path: examples/data/classification.json
+  format: json
+  features: [x1, x2]
+  targets: [label]
+  split: {train: 0.5, val: 0.3333333333333333, test: 0.16666666666666666, shuffle: false}
+model:
+  class: examples.models:Classifier
+  params: {input_dim: "${data.num_features}", num_classes: 2}
+  inputs: {x: {source: features, dtype: float32}}
+training:
+  epochs: 2
+  batch_size: 2
+  shuffle: false
+  device: cpu
+  optimizer: {name: SGD, params: {lr: 0.01}}
+  objectives:
+    - loss: {name: CrossEntropyLoss}
+      bindings:
+        input: {source: outputs.logits, dtype: float32}
+        target: {source: targets.label, dtype: int64}
+evaluation: {metrics: []}
+logging: {console: true, tensorboard: false, mlflow: false}
+saving:
+  output_dir: runs/examples/classification
+  save_last: true
+  save_best: {monitor: val.loss, mode: min}

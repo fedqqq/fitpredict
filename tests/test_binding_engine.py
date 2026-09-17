@@ -92,7 +92,9 @@ class BindingEngineTests(unittest.TestCase):
             engine.build_kwargs({"score": "outputs"}, path="metric.bindings")  # type: ignore[dict-item]
 
     def test_source_errors_include_argument_path(self):
-        context = RuntimeSourceContext(features={}, targets={}, outputs={"score": torch.tensor([1.0])})
+        context = RuntimeSourceContext(
+            features={}, targets={}, outputs={"score": torch.tensor([1.0])}
+        )
         engine = BindingEngine(context)
 
         with self.assertRaisesRegex(ConfigError, 'metric.bindings.score source "outputs.missing"'):
@@ -133,7 +135,9 @@ class BindingEngineTests(unittest.TestCase):
         engine = BindingEngine(context)
 
         with self.assertRaisesRegex(ConfigError, "use outputs.<name>"):
-            engine.build_kwargs({"prediction": binding("outputs")}, path="training.objectives[0].bindings")
+            engine.build_kwargs(
+                {"prediction": binding("outputs")}, path="training.objectives[0].bindings"
+            )
 
 
 if __name__ == "__main__":

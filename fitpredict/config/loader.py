@@ -32,7 +32,9 @@ def load_config(source: str | Path | Mapping[str, Any]) -> ExperimentConfig:
         if exists:
             return load_config_file(path)
         return loads_config(source)
-    raise ConfigError(f"config source must be a path, string, or mapping, got {type(source).__name__}")
+    raise ConfigError(
+        f"config source must be a path, string, or mapping, got {type(source).__name__}"
+    )
 
 
 def load_config_file(path: str | Path) -> ExperimentConfig:
@@ -102,7 +104,9 @@ def _parse_json(text: str, source_name: str) -> Mapping[str, Any]:
     try:
         raw = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
     except json.JSONDecodeError as exc:
-        raise ConfigError(f"malformed JSON in {source_name}: {exc.msg} at line {exc.lineno}") from exc
+        raise ConfigError(
+            f"malformed JSON in {source_name}: {exc.msg} at line {exc.lineno}"
+        ) from exc
     if raw is None:
         raise ConfigError(f"{source_name} is empty; expected a top-level mapping")
     if not isinstance(raw, Mapping):
@@ -128,10 +132,13 @@ def _parse_yaml(text: str, source_name: str) -> Mapping[str, Any]:
             "install PyYAML or use JSON"
         ) from exc
     try:
+
         class UniqueKeyLoader(yaml.SafeLoader):
             pass
 
-        def construct_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        def construct_mapping(
+            loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False
+        ) -> dict[Any, Any]:
             loader.flatten_mapping(node)
             result: dict[Any, Any] = {}
             for key_node, value_node in node.value:

@@ -1,21 +1,25 @@
-name: CI
+name: Publish to PyPI
 
 on:
   push:
-  pull_request:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
 
 env:
   PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/tests
 
 jobs:
-  tests:
-    name: Python ${{ matrix.python-version }}
+  publish-pypi:
+    name: Build, release, and publish
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.11', '3.12']
+    timeout-minutes: 25
+    environment:
+      name: pypi
+      url: https://pypi.org/project/fitpredict/
 
     steps:
       - name: Check out repository
@@ -24,7 +28,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
           cache: pip
 
       - name: Install package and dev dependencies
@@ -47,8 +51,16 @@ jobs:
       - name: Syntax check
         run: python -m compileall -q fitpredict tests examples scripts
 
-      - name: Build package
+      - name: Build distributions
         run: python -m build
 
-      - name: Check package metadata
-        run: python scripts/check_version.py
+      - name: Check release version metadata
+        run: python scripts/check_version.py --tag '${{ github.ref_name }}'
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create '${{ github.ref_name }}' dist/* --title '${{ github.ref_name }}' --notes-file CHANGELOG.md
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

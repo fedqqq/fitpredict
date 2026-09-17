@@ -67,7 +67,9 @@ def tensorize_source(
     """
 
     parsed = source if isinstance(source, BindingSource) else BindingSource.parse(source, path)
-    selected_metadata = metadata if metadata is not None else data.metadata if data is not None else None
+    selected_metadata = (
+        metadata if metadata is not None else data.metadata if data is not None else None
+    )
     torch_dtype = _resolve_explicit_dtype(dtype, f"{path}.dtype")
 
     if parsed.is_feature_aggregate:
@@ -90,8 +92,12 @@ def tensorize_source(
             rows,
             parsed.name,
             dtype=torch_dtype,
-            metadata_shape=(selected_metadata.feature_shapes.get(parsed.name) if selected_metadata else None),
-            metadata_dtype=(selected_metadata.feature_dtypes.get(parsed.name) if selected_metadata else None),
+            metadata_shape=(
+                selected_metadata.feature_shapes.get(parsed.name) if selected_metadata else None
+            ),
+            metadata_dtype=(
+                selected_metadata.feature_dtypes.get(parsed.name) if selected_metadata else None
+            ),
             path=f'{path} source "{parsed}"',
         )
         return TensorizedBatch(tensor=tensor, source=parsed, columns=(parsed.name,))
@@ -103,8 +109,12 @@ def tensorize_source(
             rows,
             parsed.name,
             dtype=torch_dtype,
-            metadata_shape=(selected_metadata.target_shapes.get(parsed.name) if selected_metadata else None),
-            metadata_dtype=(selected_metadata.target_dtypes.get(parsed.name) if selected_metadata else None),
+            metadata_shape=(
+                selected_metadata.target_shapes.get(parsed.name) if selected_metadata else None
+            ),
+            metadata_dtype=(
+                selected_metadata.target_dtypes.get(parsed.name) if selected_metadata else None
+            ),
             path=f'{path} source "{parsed}"',
         )
         return TensorizedBatch(tensor=tensor, source=parsed, columns=(parsed.name,))
@@ -161,9 +171,7 @@ def aggregate_feature_tensors(
         if not isinstance(tensor, torch.Tensor):
             raise ConfigError(f'{path} source "features.{feature}" must be a torch.Tensor.')
         if tensor.ndim == 0:
-            raise ConfigError(
-                f'{path} source "features.{feature}" must include a batch dimension.'
-            )
+            raise ConfigError(f'{path} source "features.{feature}" must include a batch dimension.')
         batches.append(tensor)
 
     batch_sizes = {int(batch.shape[0]) for batch in batches}
@@ -248,11 +256,13 @@ def _tensorize_column(
             raise ConfigError(f'{path} is missing column "{column}" at row {index}.')
         value = row[column]
         if value is None:
-            raise ConfigError(f'{path} contains null at row {index}; null values cannot be tensorized.')
+            raise ConfigError(
+                f"{path} contains null at row {index}; null values cannot be tensorized."
+            )
         shape = _sample_shape(value)
         if shape is None:
             raise ConfigError(
-                f'{path} contains ragged nested values at row {index}; '
+                f"{path} contains ragged nested values at row {index}; "
                 "fitpredict does not perform automatic padding."
             )
         value_dtype = _value_dtype(value)
@@ -272,14 +282,14 @@ def _tensorize_column(
     if len(unique_shapes) != 1:
         observed = "\n".join(f"- row {index}: {shape}" for index, shape in enumerate(shapes))
         raise ConfigError(
-            f'{path} could not be converted to a consistent batch tensor.\n'
+            f"{path} could not be converted to a consistent batch tensor.\n"
             f"Observed sample shapes:\n{observed}\n"
             "fitpredict does not perform automatic padding."
         )
     sample_shape = shapes[0]
     if metadata_shape is not None and sample_shape != metadata_shape:
         raise ConfigError(
-            f'{path} sample shape {sample_shape} does not match data metadata shape {metadata_shape}.'
+            f"{path} sample shape {sample_shape} does not match data metadata shape {metadata_shape}."
         )
     if metadata_dtype in {"str", "dict", "mixed"}:
         raise ConfigError(f'{path} has unsupported metadata dtype "{metadata_dtype}".')
@@ -362,9 +372,10 @@ def _sample_shape(value: Any) -> tuple[int, ...] | None:
     if isinstance(value, (list, tuple)):
         if not value:
             return (0,)
-        child_shapes = [_sample_shape(item) for item in value]
-        if any(shape is None for shape in child_shapes):
+        maybe_child_shapes = [_sample_shape(item) for item in value]
+        if any(shape is None for shape in maybe_child_shapes):
             return None
+        child_shapes = [shape for shape in maybe_child_shapes if shape is not None]
         if len(set(child_shapes)) != 1:
             return None
         return (len(value),) + child_shapes[0]
