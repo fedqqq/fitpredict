@@ -1,7 +1,12 @@
+import contextlib
+import io
 import json
 import math
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import torch
@@ -91,6 +96,58 @@ class EvalSensitiveMSELoss(torch.nn.Module):
     def forward(self, input, target):
         penalty = 100.0 if self.training else 0.0
         return (input - target).square().mean() + penalty
+
+
+class FakeSummaryWriter:
+    instances = []
+
+    def __init__(self, log_dir=None):
+        self.log_dir = log_dir
+        self.hparams = []
+        self.scalars = []
+        self.closed = False
+        type(self).instances.append(self)
+
+    def add_hparams(self, params, metrics):
+        allowed_types = (str, bool, int, float)
+        if not all(isinstance(value, allowed_types) for value in params.values()):
+            raise TypeError("unsupported hparam type")
+        self.hparams.append((dict(params), dict(metrics)))
+
+    def add_scalar(self, name, value, step):
+        self.scalars.append((name, float(value), step))
+
+    def close(self):
+        self.closed = True
+
+
+class FakeMlflowRun:
+    exits = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        type(self).exits.append(exc_type)
+
+
+class FakeMlflowModule(types.ModuleType):
+    def __init__(self):
+        super().__init__("mlflow")
+        self.params = []
+        self.metrics = []
+        self.runs = []
+
+    def start_run(self):
+        run = FakeMlflowRun()
+        self.runs.append(run)
+        return run
+
+    def log_params(self, params):
+        self.params.append(dict(params))
+
+    def log_metric(self, name, value, step=None):
+        self.metrics.append((name, float(value), step))
 
 
 def scaled_mse(input, target, scale=1.0):
@@ -960,6 +1017,147 @@ class FitTests(unittest.TestCase):
         torch.testing.assert_close(result.model.weight.detach(), best_weight)
         self.assertEqual(result.history.val_loss, [0.0, 16.0])
         self.assertEqual(result.history.test_loss, 0.0)
+
+    def test_fit_writes_resolved_config_and_metric_artifacts_when_logging_disabled(self):
+        torch.manual_seed(19)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+
+            result = fit(config)
+
+            resolved_config = json.loads((output_dir / "resolved_config.json").read_text())
+            metric_records = [
+                json.loads(line)
+                for line in (output_dir / "metrics.jsonl").read_text().splitlines()
+            ]
+            summary = json.loads((output_dir / "result.json").read_text())
+
+        self.assertEqual(resolved_config["model"]["params"]["input_dim"], 2)
+        self.assertEqual(resolved_config["training"]["total_steps"], 9)
+        self.assertEqual(len(metric_records), result.config.training.epochs)
+        self.assertIn("train.loss", metric_records[0]["metrics"])
+        self.assertIn("val.loss", metric_records[0]["metrics"])
+        self.assertIn("summary", summary)
+
+    def test_fit_console_logging_reports_progress_and_results(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["training"]["epochs"] = 1
+            config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+            config["logging"] = {"console": True, "tensorboard": False, "mlflow": False}
+
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                fit(config)
+
+        output = stream.getvalue()
+        self.assertIn("fitpredict: starting training", output)
+        self.assertIn("fitpredict: epoch 1/1", output)
+        self.assertIn("fitpredict: finished", output)
+
+    def test_fit_enabled_logging_backend_requires_installed_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+            config["logging"] = {"console": False, "tensorboard": True, "mlflow": False}
+
+            def fail_tensorboard(module_name):
+                if module_name == "torch.utils.tensorboard":
+                    raise ImportError("missing tensorboard")
+                return __import__(module_name)
+
+            with mock.patch("fitpredict.training.importlib.import_module", fail_tensorboard):
+                with self.assertRaisesRegex(ConfigError, "logging.tensorboard"):
+                    fit(config)
+
+    def test_fit_closes_tensorboard_writer_when_logging_setup_fails(self):
+        class RaisingSummaryWriter(FakeSummaryWriter):
+            def add_hparams(self, params, metrics):
+                super().add_hparams(params, metrics)
+                raise RuntimeError("boom")
+
+        RaisingSummaryWriter.instances = []
+        fake_tensorboard = types.ModuleType("torch.utils.tensorboard")
+        fake_tensorboard.SummaryWriter = RaisingSummaryWriter
+        original_tensorboard = sys.modules.get("torch.utils.tensorboard")
+        sys.modules["torch.utils.tensorboard"] = fake_tensorboard
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                data_path = Path(temp_dir) / "data.json"
+                output_dir = Path(temp_dir) / "runs"
+                _write_json(data_path)
+                config = _config(data_path)
+                config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+                config["logging"] = {"console": False, "tensorboard": True, "mlflow": False}
+
+                with self.assertRaisesRegex(RuntimeError, "boom"):
+                    fit(config)
+        finally:
+            if original_tensorboard is None:
+                sys.modules.pop("torch.utils.tensorboard", None)
+            else:
+                sys.modules["torch.utils.tensorboard"] = original_tensorboard
+
+        self.assertTrue(RaisingSummaryWriter.instances[0].closed)
+
+    def test_fit_logs_params_and_metrics_to_tensorboard_and_mlflow_with_fakes(self):
+        FakeSummaryWriter.instances = []
+        FakeMlflowRun.exits = []
+        fake_tensorboard = types.ModuleType("torch.utils.tensorboard")
+        fake_tensorboard.SummaryWriter = FakeSummaryWriter
+        fake_mlflow = FakeMlflowModule()
+        original_tensorboard = sys.modules.get("torch.utils.tensorboard")
+        original_mlflow = sys.modules.get("mlflow")
+        sys.modules["torch.utils.tensorboard"] = fake_tensorboard
+        sys.modules["mlflow"] = fake_mlflow
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                data_path = Path(temp_dir) / "data.json"
+                output_dir = Path(temp_dir) / "runs"
+                _write_json(data_path)
+                config = _config(data_path)
+                config["data"]["split"] = {
+                    "train": 0.5,
+                    "val": 1 / 3,
+                    "test": 1 / 6,
+                    "shuffle": False,
+                }
+                config["training"]["epochs"] = 2
+                config["logging"] = {"console": False, "tensorboard": True, "mlflow": True}
+                config["saving"] = {
+                    "save_last": True,
+                    "save_best": {"monitor": "val.loss", "mode": "min"},
+                    "output_dir": str(output_dir),
+                }
+
+                fit(config)
+        finally:
+            if original_tensorboard is None:
+                sys.modules.pop("torch.utils.tensorboard", None)
+            else:
+                sys.modules["torch.utils.tensorboard"] = original_tensorboard
+            if original_mlflow is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = original_mlflow
+
+        writer = FakeSummaryWriter.instances[0]
+        self.assertTrue(writer.closed)
+        self.assertEqual(writer.hparams[0][0]["model.params.input_dim"], 2)
+        self.assertEqual(fake_mlflow.params[0]["training.total_steps"], 4)
+        self.assertEqual(len([name for name, _, _ in writer.scalars if name == "test.loss"]), 1)
+        self.assertEqual(len([name for name, _, _ in fake_mlflow.metrics if name == "test.loss"]), 1)
+        self.assertEqual(FakeMlflowRun.exits, [None])
 
     def test_fit_rejects_test_split_without_best_checkpoint_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:

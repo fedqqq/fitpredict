@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+import json
 import inspect
+import importlib
 from math import isfinite
 from pathlib import Path
+import sys
 from typing import Any
 
 import torch
@@ -68,152 +71,158 @@ def fit(config: str | Path | Mapping[str, Any] | ExperimentConfig) -> FitResult:
     resolved = resolve_config(typed_config, data_metadata=metadata)
     _validate_lifecycle_config(resolved)
 
-    loaded_rows = load_tabular_data(resolved.data)
-    split = split_tabular_data(loaded_rows, resolved.data)
-    train_dataset = TabularDataset(split.train, data=resolved.data)
-    val_dataset = TabularDataset(split.val, data=resolved.data)
-    test_dataset = TabularDataset(split.test, data=resolved.data)
-    train_loader = build_dataloader(
-        train_dataset,
-        batch_size=resolved.training.batch_size,
-        shuffle=resolved.training.shuffle,
-    )
-    val_loader = build_dataloader(
-        val_dataset,
-        batch_size=resolved.training.batch_size,
-        shuffle=False,
-    )
-    test_loader = build_dataloader(
-        test_dataset,
-        batch_size=resolved.training.batch_size,
-        shuffle=False,
-    )
-
-    device = _resolve_device(resolved.training.device)
-    component_resolver = ComponentResolver()
-    model = component_resolver.instantiate("model", resolved.model).to(device)
-    _load_model_weights(model, resolved.model.weights, device)
-
-    optimizer = component_resolver.instantiate(
-        "optimizer",
-        resolved.training.optimizer,
-        model.parameters(),
-    )
-    losses = [
-        _prepare_runtime_callable(
-            component_resolver.resolve("loss", objective.loss),
-            device=device,
-            mode="train",
+    with _TrainingRunLogger(resolved) as run_logger:
+        loaded_rows = load_tabular_data(resolved.data)
+        split = split_tabular_data(loaded_rows, resolved.data)
+        train_dataset = TabularDataset(split.train, data=resolved.data)
+        val_dataset = TabularDataset(split.val, data=resolved.data)
+        test_dataset = TabularDataset(split.test, data=resolved.data)
+        train_loader = build_dataloader(
+            train_dataset,
+            batch_size=resolved.training.batch_size,
+            shuffle=resolved.training.shuffle,
         )
-        for objective in resolved.training.objectives
-    ]
-    metrics = _prepare_metrics(component_resolver, resolved.evaluation.metrics, device)
-    scheduler = _build_scheduler(component_resolver, resolved, optimizer)
+        val_loader = build_dataloader(
+            val_dataset,
+            batch_size=resolved.training.batch_size,
+            shuffle=False,
+        )
+        test_loader = build_dataloader(
+            test_dataset,
+            batch_size=resolved.training.batch_size,
+            shuffle=False,
+        )
 
-    checkpoint_paths: dict[str, Path] = {}
-    output_dir = resolved.saving.output_dir
-    if resolved.saving.save_last or resolved.saving.save_best is not None:
-        output_dir.mkdir(parents=True, exist_ok=True)
-    last_path = output_dir / "last.pt"
-    best_path = output_dir / "best.pt"
-    best_value: float | None = None
+        device = _resolve_device(resolved.training.device)
+        component_resolver = ComponentResolver()
+        model = component_resolver.instantiate("model", resolved.model).to(device)
+        _load_model_weights(model, resolved.model.weights, device)
 
-    epoch_losses: list[float] = []
-    batch_losses: list[float] = []
-    val_losses: list[float] = []
-    val_metrics: list[dict[str, float]] = []
-    scheduler_metrics: dict[str, list[float]] = {}
-    for epoch in range(resolved.training.epochs):
-        model.train()
-        total_loss = 0.0
-        num_batches = 0
-        for batch in train_loader:
-            batch = _move_batch_to_device(batch, device)
-            optimizer.zero_grad()
-            loss = _batch_loss(
+        optimizer = component_resolver.instantiate(
+            "optimizer",
+            resolved.training.optimizer,
+            model.parameters(),
+        )
+        losses = [
+            _prepare_runtime_callable(
+                component_resolver.resolve("loss", objective.loss),
+                device=device,
+                mode="train",
+            )
+            for objective in resolved.training.objectives
+        ]
+        metrics = _prepare_metrics(component_resolver, resolved.evaluation.metrics, device)
+        scheduler = _build_scheduler(component_resolver, resolved, optimizer)
+
+        checkpoint_paths: dict[str, Path] = {}
+        output_dir = resolved.saving.output_dir
+        last_path = output_dir / "last.pt"
+        best_path = output_dir / "best.pt"
+        best_value: float | None = None
+
+        epoch_losses: list[float] = []
+        batch_losses: list[float] = []
+        val_losses: list[float] = []
+        val_metrics: list[dict[str, float]] = []
+        scheduler_metrics: dict[str, list[float]] = {}
+        for epoch in range(resolved.training.epochs):
+            model.train()
+            total_loss = 0.0
+            num_batches = 0
+            for batch in train_loader:
+                batch = _move_batch_to_device(batch, device)
+                optimizer.zero_grad()
+                loss = _batch_loss(
+                    model,
+                    batch,
+                    config=resolved,
+                    losses=losses,
+                    context_path="train.batch",
+                )
+                loss.backward()
+                optimizer.step()
+                _step_scheduler(scheduler, when="batch")
+
+                loss_value = float(loss.detach().cpu().item())
+                batch_losses.append(loss_value)
+                total_loss += loss_value
+                num_batches += 1
+            epoch_losses.append(total_loss / num_batches if num_batches else float("nan"))
+            _step_scheduler(scheduler, when="epoch")
+
+            validation = _evaluate_model(
                 model,
-                batch,
+                val_loader,
                 config=resolved,
                 losses=losses,
-                context_path="train.batch",
+                metrics=metrics,
+                device=device,
+                split_name="val",
             )
-            loss.backward()
-            optimizer.step()
-            _step_scheduler(scheduler, when="batch")
+            val_losses.append(validation["loss"])
+            val_metrics.append({name: value for name, value in validation.items() if name != "loss"})
 
-            loss_value = float(loss.detach().cpu().item())
-            batch_losses.append(loss_value)
-            total_loss += loss_value
-            num_batches += 1
-        epoch_losses.append(total_loss / num_batches if num_batches else float("nan"))
-        _step_scheduler(scheduler, when="epoch")
+            checkpoint_metrics = {
+                "train.loss": epoch_losses[-1],
+                **{f"val.{name}": value for name, value in validation.items()},
+            }
+            _record_scheduler_metrics(scheduler_metrics, checkpoint_metrics)
+            run_logger.log_metrics(epoch=epoch + 1, metrics=checkpoint_metrics)
+            _step_scheduler(scheduler, when="metric", values=checkpoint_metrics)
+            if resolved.saving.save_last:
+                _save_checkpoint(last_path, model=model)
+                checkpoint_paths["last"] = last_path
+            if resolved.saving.save_best is not None:
+                monitor = resolved.saving.save_best.monitor
+                monitor_value = checkpoint_metrics[monitor]
+                if _is_better(
+                    monitor_value,
+                    best_value,
+                    mode=resolved.saving.save_best.mode,
+                ):
+                    _save_checkpoint(best_path, model=model)
+                    best_value = monitor_value
+                    checkpoint_paths["best"] = best_path
 
-        validation = _evaluate_model(
-            model,
-            val_loader,
+        test_loss: float | None = None
+        test_metrics: dict[str, float] = {}
+        if len(test_dataset) > 0:
+            if "best" not in checkpoint_paths:
+                raise ConfigError("final test requires a selected best checkpoint.")
+            _load_checkpoint_model_state(model, checkpoint_paths["best"], device)
+            test = _evaluate_model(
+                model,
+                test_loader,
+                config=resolved,
+                losses=losses,
+                metrics=metrics,
+                device=device,
+                split_name="test",
+            )
+            test_loss = test["loss"]
+            test_metrics = {name: value for name, value in test.items() if name != "loss"}
+            run_logger.log_metrics(
+                epoch=resolved.training.epochs,
+                metrics={f"test.{name}": value for name, value in test.items()},
+            )
+
+        result = FitResult(
+            model=model,
             config=resolved,
-            losses=losses,
-            metrics=metrics,
-            device=device,
-            split_name="val",
+            history=FitHistory(
+                train_loss=epoch_losses,
+                batch_loss=batch_losses,
+                val_loss=val_losses,
+                val_metrics=val_metrics,
+                test_loss=test_loss,
+                test_metrics=test_metrics,
+                scheduler_metrics=scheduler_metrics,
+            ),
+            optimizer=optimizer,
+            checkpoint_paths=checkpoint_paths,
         )
-        val_losses.append(validation["loss"])
-        val_metrics.append({name: value for name, value in validation.items() if name != "loss"})
-
-        checkpoint_metrics = {
-            "train.loss": epoch_losses[-1],
-            **{f"val.{name}": value for name, value in validation.items()},
-        }
-        _record_scheduler_metrics(scheduler_metrics, checkpoint_metrics)
-        _step_scheduler(scheduler, when="metric", values=checkpoint_metrics)
-        if resolved.saving.save_last:
-            _save_checkpoint(last_path, model=model)
-            checkpoint_paths["last"] = last_path
-        if resolved.saving.save_best is not None:
-            monitor = resolved.saving.save_best.monitor
-            monitor_value = checkpoint_metrics[monitor]
-            if _is_better(
-                monitor_value,
-                best_value,
-                mode=resolved.saving.save_best.mode,
-            ):
-                _save_checkpoint(best_path, model=model)
-                best_value = monitor_value
-                checkpoint_paths["best"] = best_path
-
-    test_loss: float | None = None
-    test_metrics: dict[str, float] = {}
-    if len(test_dataset) > 0:
-        if "best" not in checkpoint_paths:
-            raise ConfigError("final test requires a selected best checkpoint.")
-        _load_checkpoint_model_state(model, checkpoint_paths["best"], device)
-        test = _evaluate_model(
-            model,
-            test_loader,
-            config=resolved,
-            losses=losses,
-            metrics=metrics,
-            device=device,
-            split_name="test",
-        )
-        test_loss = test["loss"]
-        test_metrics = {name: value for name, value in test.items() if name != "loss"}
-
-    return FitResult(
-        model=model,
-        config=resolved,
-        history=FitHistory(
-            train_loss=epoch_losses,
-            batch_loss=batch_losses,
-            val_loss=val_losses,
-            val_metrics=val_metrics,
-            test_loss=test_loss,
-            test_metrics=test_metrics,
-            scheduler_metrics=scheduler_metrics,
-        ),
-        optimizer=optimizer,
-        checkpoint_paths=checkpoint_paths,
-    )
+        run_logger.log_result(result)
+        return result
 
 
 def _validate_lifecycle_config(config: ExperimentConfig) -> None:
@@ -303,6 +312,138 @@ class _RuntimeScheduler:
     scheduler: Any
     step_on: str
     monitor: str | None
+
+
+class _TrainingRunLogger:
+    def __init__(self, config: ExperimentConfig) -> None:
+        self.config = config
+        self.output_dir = config.saving.output_dir
+        self.metrics_path = self.output_dir / "metrics.jsonl"
+        self.resolved_config_path = self.output_dir / "resolved_config.json"
+        self._metrics_file: Any | None = None
+        self._tensorboard_writer: Any | None = None
+        self._mlflow: Any | None = None
+        self._mlflow_run: Any | None = None
+
+    def __enter__(self) -> "_TrainingRunLogger":
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            self._write_resolved_config()
+            self._metrics_file = self.metrics_path.open("w", encoding="utf-8")
+            params = _loggable_params(_flatten_mapping(_jsonable(self.config)))
+            if self.config.logging.tensorboard:
+                self._tensorboard_writer = self._create_tensorboard_writer()
+                if hasattr(self._tensorboard_writer, "add_hparams"):
+                    self._tensorboard_writer.add_hparams(params, {})
+            if self.config.logging.mlflow:
+                self._mlflow = self._import_optional(
+                    "mlflow",
+                    "logging.mlflow requires the 'mlflow' package to be installed.",
+                )
+                self._mlflow_run = self._mlflow.start_run()
+                self._mlflow_run.__enter__()
+                self._mlflow.log_params(params)
+            if self.config.logging.console:
+                print(
+                    "fitpredict: starting training "
+                    f"epochs={self.config.training.epochs} "
+                    f"train={self.config.data.train_size} "
+                    f"val={self.config.data.val_size} "
+                    f"test={self.config.data.test_size}"
+                )
+            return self
+        except BaseException:
+            self.__exit__(*sys.exc_info())
+            raise
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        close_error: BaseException | None = None
+        try:
+            if self._tensorboard_writer is not None:
+                close = getattr(self._tensorboard_writer, "close", None)
+                if close is not None:
+                    close()
+        except BaseException as writer_exc:
+            close_error = writer_exc
+        try:
+            if self._mlflow_run is not None:
+                self._mlflow_run.__exit__(exc_type, exc, traceback)
+        except BaseException as mlflow_exc:
+            if close_error is None:
+                close_error = mlflow_exc
+        try:
+            if self._metrics_file is not None:
+                self._metrics_file.close()
+        except BaseException as file_exc:
+            if close_error is None:
+                close_error = file_exc
+        if close_error is not None and exc_type is None:
+            raise close_error
+
+    def log_metrics(self, *, epoch: int, metrics: Mapping[str, float]) -> None:
+        record = {"epoch": epoch, "metrics": dict(metrics)}
+        if self._metrics_file is not None:
+            self._metrics_file.write(json.dumps(record, sort_keys=True) + "\n")
+            self._metrics_file.flush()
+        for name, value in metrics.items():
+            if self._tensorboard_writer is not None:
+                self._tensorboard_writer.add_scalar(name, value, epoch)
+            if self._mlflow is not None:
+                self._mlflow.log_metric(name, value, step=epoch)
+        if self.config.logging.console:
+            values = " ".join(f"{name}={value:.6g}" for name, value in sorted(metrics.items()))
+            print(f"fitpredict: epoch {epoch}/{self.config.training.epochs} {values}")
+
+    def log_result(self, result: FitResult) -> None:
+        summary = {
+            "train.loss": result.history.train_loss[-1] if result.history.train_loss else float("nan"),
+            "val.loss": result.history.val_loss[-1] if result.history.val_loss else float("nan"),
+        }
+        if result.history.test_loss is not None:
+            summary["test.loss"] = result.history.test_loss
+            summary.update({f"test.{name}": value for name, value in result.history.test_metrics.items()})
+        result_path = self.output_dir / "result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "summary": summary,
+                    "checkpoint_paths": {
+                        name: str(path) for name, path in result.checkpoint_paths.items()
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        if self.config.logging.console:
+            values = " ".join(f"{name}={value:.6g}" for name, value in sorted(summary.items()))
+            print(f"fitpredict: finished {values}")
+
+    def _write_resolved_config(self) -> None:
+        self.resolved_config_path.write_text(
+            json.dumps(_jsonable(self.config), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _create_tensorboard_writer(self) -> Any:
+        module = self._import_optional(
+            "torch.utils.tensorboard",
+            "logging.tensorboard requires the 'tensorboard' package to be installed.",
+        )
+        try:
+            writer_cls = module.SummaryWriter
+        except AttributeError as exc:
+            raise ConfigError("logging.tensorboard could not find SummaryWriter.") from exc
+        return writer_cls(log_dir=str(self.output_dir / "tensorboard"))
+
+    @staticmethod
+    def _import_optional(module_name: str, message: str) -> Any:
+        try:
+            return importlib.import_module(module_name)
+        except ImportError as exc:
+            raise ConfigError(message) from exc
 
 
 def _prepare_runtime_callable(
@@ -816,6 +957,45 @@ def _concat_outputs(values: list[Any]) -> Any:
             for key in first
         }
     return values
+
+
+def _jsonable(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return {field.name: _jsonable(getattr(value, field.name)) for field in fields(value)}
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _flatten_mapping(value: Mapping[str, Any], *, prefix: str = "") -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    for key, item in value.items():
+        name = f"{prefix}.{key}" if prefix else key
+        if isinstance(item, Mapping):
+            flat.update(_flatten_mapping(item, prefix=name))
+        elif isinstance(item, list):
+            flat[name] = json.dumps(item, sort_keys=True)
+        else:
+            flat[name] = item
+    return flat
+
+
+def _loggable_params(params: Mapping[str, Any]) -> dict[str, int | float | str | bool]:
+    loggable: dict[str, int | float | str | bool] = {}
+    for name, value in params.items():
+        if value is None:
+            loggable[name] = "null"
+        elif isinstance(value, (str, bool, int, float)):
+            loggable[name] = value
+        else:
+            loggable[name] = json.dumps(_jsonable(value), sort_keys=True)
+    return loggable
 
 
 def _save_checkpoint(

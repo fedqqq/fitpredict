@@ -13,7 +13,7 @@ judge whether an experiment is scientifically sound.
 
 ## Current Status
 
-P0 Milestone 0 and P1 training lifecycle are implemented.
+P0 Milestone 0, P1 training lifecycle, and P2 experiment infrastructure are implemented.
 
 Implemented:
 
@@ -39,9 +39,17 @@ Implemented:
 - final test pass that loads `best.pt` once
 - scheduler stepping on batch, epoch, or metric
 - multiple weighted objectives
+- console logging plus resolved config, metric, and result artifacts in
+  `saving.output_dir`
+- TensorBoard and MLflow parameter/metric logging when enabled
+- minimal `predict()` inference pipeline:
+  config -> metadata/resolve -> prediction data -> Dataset -> DataLoader ->
+  model -> checkpoint or `model.weights` -> bound forward pass -> detached CPU
+  predictions
 
-TensorBoard, MLflow, console logging, and prediction/inference lifecycle belong
-to later milestones.
+TensorBoard and MLflow are optional runtime integrations. If either backend is
+enabled in config but the package is not installed, `fit()` raises a clear
+configuration error.
 
 ## Quickstart
 
@@ -97,7 +105,10 @@ training:
 
 evaluation:
   metrics: []
-logging: {}
+logging:
+  console: true
+  tensorboard: false
+  mlflow: false
 saving:
   output_dir: runs/example
   save_last: true
@@ -130,6 +141,23 @@ from fitpredict import fit
 result = fit("config.yaml")
 print(result.history.train_loss)
 ```
+
+Run inference:
+
+```python
+from fitpredict import predict
+
+predictions = predict("config.yaml", checkpoint="runs/example/best.pt", data="predict.jsonl")
+print(predictions)
+```
+
+`predict()` returns the model output shape directly: a single tensor stays a
+tensor, and a dictionary output stays a dictionary of tensors. Prediction rows
+only need the configured feature columns; target columns used for training
+losses or metrics are not required. Empty prediction data returns `None`.
+Tensor outputs must include a leading batch dimension; scalar tensor outputs are
+rejected. If neither `checkpoint` nor `model.weights` is set, prediction uses a
+freshly initialized configured model.
 
 ## Tests
 
