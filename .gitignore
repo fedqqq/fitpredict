@@ -45,7 +45,7 @@ checkpoints/
 *.ckpt
 
 # Local data artifacts
-data/
+/data/
 *.parquet
 *.feather
 
