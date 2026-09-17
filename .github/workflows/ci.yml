@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/tests
+
 jobs:
   tests:
     name: Tests
