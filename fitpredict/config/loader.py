@@ -103,6 +103,8 @@ def _parse_json(text: str, source_name: str) -> Mapping[str, Any]:
         raw = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
     except json.JSONDecodeError as exc:
         raise ConfigError(f"malformed JSON in {source_name}: {exc.msg} at line {exc.lineno}") from exc
+    if raw is None:
+        raise ConfigError(f"{source_name} is empty; expected a top-level mapping")
     if not isinstance(raw, Mapping):
         raise ConfigError(f"{source_name} must contain a top-level mapping")
     return raw
@@ -148,6 +150,8 @@ def _parse_yaml(text: str, source_name: str) -> Mapping[str, Any]:
         raise
     except yaml.YAMLError as exc:
         raise ConfigError(f"malformed YAML in {source_name}: {exc}") from exc
+    if raw is None:
+        raise ConfigError(f"{source_name} is empty; expected a top-level mapping")
     if not isinstance(raw, Mapping):
         raise ConfigError(f"{source_name} must contain a top-level mapping")
     return raw

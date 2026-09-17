@@ -159,6 +159,35 @@ Tensor outputs must include a leading batch dimension; scalar tensor outputs are
 rejected. If neither `checkpoint` nor `model.weights` is set, prediction uses a
 freshly initialized configured model.
 
+
+## Public API
+
+Application code should import from the root package:
+
+```python
+from fitpredict import (
+    ConfigError,
+    ExperimentConfig,
+    fit,
+    load_config,
+    load_config_file,
+    loads_config,
+    predict,
+    resolve_config,
+)
+```
+
+The stable user-facing entry points are:
+
+- `fit(config)` — train an experiment from a path, raw JSON/YAML string, mapping, or `ExperimentConfig`.
+- `predict(config, checkpoint=None, data=None)` — run inference for the configured model.
+- `load_config(source)`, `load_config_file(path)`, `loads_config(text, format=None)` — load typed config objects.
+- `resolve_config(config, data_metadata=...)` — resolve defaults, metadata-derived fields, and config references.
+- `ConfigError` — configuration and runtime-contract errors intended to be shown to users.
+- `ExperimentConfig` — the typed config object returned by config loading.
+
+Lower-level modules under `fitpredict.config`, `fitpredict.data`, and `fitpredict.binding` are implementation and extension helpers. They are tested for this repository, but user projects should prefer the root imports above.
+
 ## Tests
 
 Run the test suite:

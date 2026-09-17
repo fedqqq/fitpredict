@@ -180,6 +180,37 @@ class ConfigResolverTests(unittest.TestCase):
 
         self.assertEqual(config.saving.save_best.monitor, "val.accuracy")
 
+    def test_validates_metric_scheduler_monitor(self):
+        raw = valid_config()
+        raw["training"]["scheduler"] = {
+            "name": "ReduceLROnPlateau",
+            "monitor": "val.unknown",
+        }
+
+        with self.assertRaisesRegex(ConfigError, "unknown validation metric"):
+            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+
+        raw = valid_config()
+        raw["evaluation"] = {"metrics": [{"name": "accuracy"}]}
+        raw["training"]["scheduler"] = {
+            "name": "ReduceLROnPlateau",
+            "monitor": "val.accuracy",
+        }
+
+        config = resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+
+        self.assertEqual(config.training.scheduler.monitor, "val.accuracy")
+
+    def test_rejects_scheduler_monitor_test_metric_during_resolution(self):
+        raw = valid_config()
+        raw["training"]["scheduler"] = {
+            "name": "ReduceLROnPlateau",
+            "monitor": "test.accuracy",
+        }
+
+        with self.assertRaisesRegex(ConfigError, "cannot reference test"):
+            resolve_config(raw, data_metadata={"num_rows": 1, "columns": ["f1", "f2", "f3", "target"]})
+
 
 if __name__ == "__main__":
     unittest.main()

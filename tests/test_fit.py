@@ -1,4 +1,5 @@
 import contextlib
+import importlib
 import io
 import json
 import math
@@ -13,6 +14,7 @@ import torch
 
 from fitpredict import FitResult, fit
 from fitpredict.config import ConfigError, ExperimentConfig, load_config
+from fitpredict.training import _build_model_context
 
 
 class LinearRegressor(torch.nn.Module):
@@ -32,6 +34,11 @@ class EchoModel(torch.nn.Module):
 
     def forward(self, x):
         return x.reshape(x.shape[0], -1).squeeze(-1) + self.anchor * 0.0
+
+
+class RequiresDifferentInputModel(torch.nn.Module):
+    def forward(self, y):
+        return y
 
 
 class DictLogitsModel(torch.nn.Module):
@@ -90,6 +97,16 @@ class RecordingMetricScheduler:
 
     def step(self, value):
         type(self).values.append(float(value))
+
+
+class CountingEpochScheduler:
+    calls = 0
+
+    def __init__(self, optimizer):
+        self.optimizer = optimizer
+
+    def step(self):
+        type(self).calls += 1
 
 
 class EvalSensitiveMSELoss(torch.nn.Module):
@@ -154,6 +171,10 @@ def scaled_mse(input, target, scale=1.0):
     return (input - target).square().mean() * scale
 
 
+def exploding_loss(input, target):
+    raise RuntimeError("shape mismatch from torch")
+
+
 def add_constant(input, value=0.0):
     return input + value
 
@@ -188,6 +209,10 @@ def exact_match(y_true, y_pred):
     return (y_true == y_pred).float().mean()
 
 
+def negative_mse(input, target):
+    return -float((input - target).square().mean().item())
+
+
 def _write_json(path: Path) -> None:
     rows = [
         {"x1": 0.0, "x2": 0.0, "y": 0.0},
@@ -198,6 +223,79 @@ def _write_json(path: Path) -> None:
         {"x1": 1.0, "x2": 2.0, "y": 0.0},
     ]
     path.write_text(json.dumps(rows), encoding="utf-8")
+
+
+def _single_feature_config(
+    data_path: Path,
+    *,
+    output_dir: Path | None = None,
+    epochs: int = 1,
+) -> dict:
+    config = {
+        "data": {
+            "path": str(data_path),
+            "format": "json",
+            "features": ["x"],
+            "targets": ["y"],
+            "split": {
+                "train": 0.5,
+                "val": 0.25,
+                "test": 0.25,
+                "shuffle": False,
+            },
+        },
+        "model": {
+            "class": f"{__name__}:SingleWeightModel",
+            "inputs": {"x": {"source": "features.x", "dtype": "float32"}},
+        },
+        "training": {
+            "epochs": epochs,
+            "batch_size": 1,
+            "shuffle": False,
+            "device": "cpu",
+            "optimizer": {"name": "SGD", "params": {"lr": 0.5}},
+            "objectives": [
+                {
+                    "loss": {"name": "MSELoss"},
+                    "bindings": {
+                        "input": {"source": "outputs", "dtype": "float32"},
+                        "target": {"source": "targets.y", "dtype": "float32"},
+                    },
+                    "weight": 0.5,
+                },
+                {
+                    "loss": {
+                        "name": f"{__name__}:scaled_mse",
+                        "params": {"scale": 0.5},
+                    },
+                    "bindings": {
+                        "input": {"source": "outputs", "dtype": "float32"},
+                        "target": {"source": "targets.y", "dtype": "float32"},
+                    },
+                    "weight": 1.0,
+                },
+            ],
+        },
+        "evaluation": {
+            "metrics": [
+                {
+                    "name": f"{__name__}:negative_mse",
+                    "bindings": {
+                        "input": {"source": "outputs", "dtype": "float32"},
+                        "target": {"source": "targets.y", "dtype": "float32"},
+                    },
+                }
+            ]
+        },
+        "logging": {"console": False, "tensorboard": False, "mlflow": False},
+        "saving": {
+            "save_last": True,
+            "save_best": {"monitor": f"val.{__name__}:negative_mse", "mode": "max"},
+        },
+    }
+    if output_dir is not None:
+        config["saving"]["output_dir"] = str(output_dir)
+    return config
 
 
 def _config(data_path: Path) -> dict:
@@ -251,6 +349,64 @@ def _config(data_path: Path) -> dict:
 
 
 class FitTests(unittest.TestCase):
+    def test_runtime_loss_errors_are_config_errors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["training"]["epochs"] = 1
+            config["training"]["objectives"][0]["loss"] = {"name": f"{__name__}:exploding_loss"}
+            config["saving"] = {"save_last": False}
+
+            with self.assertRaisesRegex(ConfigError, r"could not call training.objectives\[0\].loss"):
+                fit(config)
+
+    def test_model_input_signature_errors_are_config_errors(self):
+        config = ExperimentConfig.from_mapping(
+            {
+                "data": {
+                    "path": "unused.json",
+                    "format": "json",
+                    "features": ["x"],
+                    "targets": ["y"],
+                    "split": {"train": 1.0, "val": 0.0, "test": 0.0},
+                },
+                "model": {
+                    "class": f"{__name__}:RequiresDifferentInputModel",
+                    "inputs": {"x": {"source": "features.x", "dtype": "float32"}},
+                },
+                "training": {
+                    "epochs": 1,
+                    "batch_size": 1,
+                    "optimizer": {"name": "SGD"},
+                    "objectives": [
+                        {
+                            "loss": {"name": "MSELoss"},
+                            "bindings": {
+                                "input": {"source": "outputs", "dtype": "float32"},
+                                "target": {"source": "targets.y", "dtype": "float32"},
+                            },
+                        }
+                    ],
+                },
+                "evaluation": {},
+                "logging": {},
+                "saving": {},
+            }
+        )
+        batch = {
+            "features": {"x": torch.tensor([1.0])},
+            "targets": {"y": torch.tensor([1.0])},
+        }
+
+        with self.assertRaisesRegex(ConfigError, "could not call model with model.inputs bindings"):
+            _build_model_context(
+                RequiresDifferentInputModel(),
+                batch,
+                config=config,
+                context_path="train.batch",
+            )
+
     def test_fit_trains_custom_model_from_json_path(self):
         torch.manual_seed(7)
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -912,6 +1068,68 @@ class FitTests(unittest.TestCase):
 
         self.assertAlmostEqual(result.optimizer.param_groups[0]["lr"], 0.05)
 
+    def test_fit_steps_custom_epoch_scheduler_once_per_epoch(self):
+        CountingEpochScheduler.calls = 0
+        rows = [
+            {"x": 0.0, "y": 0.0},
+            {"x": 1.0, "y": 1.0},
+            {"x": 2.0, "y": 2.0},
+            {"x": 3.0, "y": 3.0},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            data_path.write_text(json.dumps(rows), encoding="utf-8")
+            config = _single_feature_config(data_path, epochs=3)
+            config["data"]["split"] = {
+                "train": 0.5,
+                "val": 0.5,
+                "test": 0.0,
+                "shuffle": False,
+            }
+            config["training"]["scheduler"] = {
+                "name": f"{__name__}:CountingEpochScheduler",
+                "step_on": "epoch",
+            }
+            config["saving"] = {"save_last": False}
+
+            fit(config)
+
+        self.assertEqual(CountingEpochScheduler.calls, 3)
+
+    def test_fit_full_lifecycle_writes_checkpoints_metrics_and_final_test_once(self):
+        rows = [
+            {"x": 1.0, "y": 2.0},
+            {"x": 1.0, "y": 2.0},
+            {"x": 2.0, "y": 4.0},
+            {"x": 3.0, "y": 6.0},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            data_path.write_text(json.dumps(rows), encoding="utf-8")
+            result = fit(_single_feature_config(data_path, output_dir=output_dir, epochs=2))
+
+            metric_records = [
+                json.loads(line)
+                for line in (output_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            result_summary = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(result.history.train_loss), 2)
+            self.assertEqual(len(result.history.val_loss), 2)
+            self.assertEqual(len(result.history.val_metrics), 2)
+            self.assertEqual(set(result.history.test_metrics), {f"{__name__}:negative_mse"})
+            self.assertTrue(math.isfinite(result.history.test_loss))
+            self.assertTrue((output_dir / "best.pt").exists())
+            self.assertTrue((output_dir / "last.pt").exists())
+            self.assertEqual(result.checkpoint_paths["best"], output_dir / "best.pt")
+            self.assertEqual(result.checkpoint_paths["last"], output_dir / "last.pt")
+            self.assertEqual(len(metric_records), 3)
+            self.assertEqual(
+                sum(1 for record in metric_records if "test.loss" in record["metrics"]),
+                1,
+            )
+            self.assertIn("test.loss", result_summary["summary"])
+
     def test_fit_runs_validation_checkpoints_and_final_test_from_best(self):
         torch.manual_seed(17)
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1080,6 +1298,51 @@ class FitTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, "logging.tensorboard"):
                     fit(config)
 
+    def test_fit_enabled_mlflow_backend_requires_installed_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+            config["logging"] = {"console": False, "tensorboard": False, "mlflow": True}
+
+            def fail_mlflow(module_name):
+                if module_name == "mlflow":
+                    raise ImportError("missing mlflow")
+                return __import__(module_name)
+
+            with mock.patch("fitpredict.training.importlib.import_module", fail_mlflow):
+                with self.assertRaisesRegex(ConfigError, "logging.mlflow"):
+                    fit(config)
+
+    def test_fit_disabled_optional_logging_does_not_import_backends(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["training"]["epochs"] = 1
+            config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+            config["logging"] = {"console": False, "tensorboard": False, "mlflow": False}
+
+            real_import_module = importlib.import_module
+
+            def reject_optional_logging_imports(module_name):
+                if module_name in {"torch.utils.tensorboard", "mlflow"}:
+                    raise AssertionError(f"unexpected optional logging import: {module_name}")
+                return real_import_module(module_name)
+
+            with mock.patch(
+                "fitpredict.training.importlib.import_module",
+                reject_optional_logging_imports,
+            ):
+                fit(config)
+
+            self.assertTrue((output_dir / "metrics.jsonl").exists())
+            self.assertTrue((output_dir / "resolved_config.json").exists())
+            self.assertTrue((output_dir / "result.json").exists())
+
     def test_fit_closes_tensorboard_writer_when_logging_setup_fails(self):
         class RaisingSummaryWriter(FakeSummaryWriter):
             def add_hparams(self, params, metrics):
@@ -1159,6 +1422,59 @@ class FitTests(unittest.TestCase):
         self.assertEqual(len([name for name, _, _ in fake_mlflow.metrics if name == "test.loss"]), 1)
         self.assertEqual(FakeMlflowRun.exits, [None])
 
+    def test_fit_logs_to_tensorboard_only_with_fake(self):
+        FakeSummaryWriter.instances = []
+        fake_tensorboard = types.ModuleType("torch.utils.tensorboard")
+        fake_tensorboard.SummaryWriter = FakeSummaryWriter
+        original_tensorboard = sys.modules.get("torch.utils.tensorboard")
+        sys.modules["torch.utils.tensorboard"] = fake_tensorboard
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                data_path = Path(temp_dir) / "data.json"
+                output_dir = Path(temp_dir) / "runs"
+                _write_json(data_path)
+                config = _config(data_path)
+                config["training"]["epochs"] = 1
+                config["logging"] = {"console": False, "tensorboard": True, "mlflow": False}
+                config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+
+                fit(config)
+        finally:
+            if original_tensorboard is None:
+                sys.modules.pop("torch.utils.tensorboard", None)
+            else:
+                sys.modules["torch.utils.tensorboard"] = original_tensorboard
+
+        writer = FakeSummaryWriter.instances[0]
+        self.assertTrue(writer.closed)
+        self.assertTrue(writer.scalars)
+
+    def test_fit_logs_to_mlflow_only_with_fake(self):
+        FakeMlflowRun.exits = []
+        fake_mlflow = FakeMlflowModule()
+        original_mlflow = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = fake_mlflow
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                data_path = Path(temp_dir) / "data.json"
+                output_dir = Path(temp_dir) / "runs"
+                _write_json(data_path)
+                config = _config(data_path)
+                config["training"]["epochs"] = 1
+                config["logging"] = {"console": False, "tensorboard": False, "mlflow": True}
+                config["saving"] = {"save_last": False, "output_dir": str(output_dir)}
+
+                fit(config)
+        finally:
+            if original_mlflow is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = original_mlflow
+
+        self.assertTrue(fake_mlflow.params)
+        self.assertTrue(fake_mlflow.metrics)
+        self.assertEqual(FakeMlflowRun.exits, [None])
+
     def test_fit_rejects_test_split_without_best_checkpoint_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             data_path = Path(temp_dir) / "data.json"
@@ -1172,6 +1488,27 @@ class FitTests(unittest.TestCase):
             }
 
             with self.assertRaisesRegex(ConfigError, "test split requires saving.save_best"):
+                fit(config)
+
+    def test_fit_rejects_test_metric_as_best_checkpoint_monitor(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = Path(temp_dir) / "data.json"
+            output_dir = Path(temp_dir) / "runs"
+            _write_json(data_path)
+            config = _config(data_path)
+            config["data"]["split"] = {
+                "train": 0.5,
+                "val": 1 / 3,
+                "test": 1 / 6,
+                "shuffle": False,
+            }
+            config["saving"] = {
+                "save_last": True,
+                "save_best": {"monitor": "test.loss", "mode": "min"},
+                "output_dir": str(output_dir),
+            }
+
+            with self.assertRaisesRegex(ConfigError, "cannot reference test metrics"):
                 fit(config)
 
 

@@ -911,7 +911,7 @@ def _validate_resolved_config(config: ExperimentConfig) -> None:
         if not isinstance(objective.weight, (int, float)) or isinstance(objective.weight, bool):
             raise ConfigError(f"training.objectives[{index}].weight must be a finite number.")
 
-    _validate_scheduler(config.training.scheduler)
+    _validate_scheduler(config.training.scheduler, config)
     _validate_bindings(config.model.inputs, config, "model.inputs")
     for index, metric in enumerate(config.evaluation.metrics):
         _validate_metric_config(metric, config, f"evaluation.metrics[{index}]")
@@ -923,7 +923,7 @@ def _validate_component_config(component: ComponentConfig, path: str) -> None:
     _require_mapping_instance(component.params, f"{path}.params")
 
 
-def _validate_scheduler(scheduler: SchedulerConfig | None) -> None:
+def _validate_scheduler(scheduler: SchedulerConfig | None, config: ExperimentConfig) -> None:
     if scheduler is None:
         return
     _require_non_empty_string(scheduler.name, "training.scheduler.name")
@@ -931,6 +931,24 @@ def _validate_scheduler(scheduler: SchedulerConfig | None) -> None:
         raise ConfigError("training.scheduler.step_on must be one of: batch, epoch, metric.")
     if scheduler.step_on == "metric":
         _require_non_empty_string(scheduler.monitor, "training.scheduler.monitor")
+        _validate_scheduler_monitor(scheduler.monitor, config)
+
+
+def _validate_scheduler_monitor(monitor: str, config: ExperimentConfig) -> None:
+    if monitor.startswith("test."):
+        raise ConfigError("training.scheduler.monitor cannot reference test metrics.")
+    if monitor == "train.loss" or monitor == "val.loss":
+        return
+    if not monitor.startswith("val."):
+        raise ConfigError(
+            "training.scheduler.monitor must reference train.loss, val.loss, or a configured val metric."
+        )
+    metric_name = monitor.removeprefix("val.")
+    configured_metrics = {metric.name for metric in config.evaluation.metrics}
+    if metric_name not in configured_metrics:
+        raise ConfigError(
+            f"training.scheduler.monitor references unknown validation metric {metric_name!r}."
+        )
 
 
 def _validate_metric_config(metric: MetricConfig, config: ExperimentConfig, path: str) -> None:

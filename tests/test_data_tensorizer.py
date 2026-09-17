@@ -80,6 +80,17 @@ class DataTensorizerTests(unittest.TestCase):
 
         self.assertEqual(result.tensor.dtype, torch.float16)
 
+    def test_rejects_unsupported_explicit_dtype(self):
+        with self.assertRaisesRegex(ConfigError, "dtype is unsupported"):
+            BindingConfig.from_mapping(
+                {"source": "features.age", "dtype": "float128"},
+                "model.inputs.x",
+            )
+
+    def test_rejects_empty_row_batch_directly(self):
+        with self.assertRaisesRegex(ConfigError, "row batch is empty"):
+            tensorize_source([], "features.age", features=("age",), targets=())
+
     def test_aggregate_helper_accepts_already_batched_feature_tensors(self):
         tensors = {
             "left": torch.tensor([[1, 2], [3, 4]], dtype=torch.int64),
@@ -130,6 +141,18 @@ class DataTensorizerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ConfigError, "unsupported"):
             tensorize_source(rows, "features.age", features=("age",), targets=())
+
+    def test_unsupported_nested_values_name_the_inner_problem(self):
+        rows = [{"history": [1, "bad"]}, {"history": [2, 3]}]
+
+        with self.assertRaisesRegex(ConfigError, "strings cannot be tensorized"):
+            tensorize_source(rows, "features.history", features=("history",), targets=())
+
+    def test_rejects_mixed_bool_and_numeric_vector_values(self):
+        rows = [{"flags": [True, 1]}, {"flags": [False, 2]}]
+
+        with self.assertRaisesRegex(ConfigError, "bool values cannot be mixed"):
+            tensorize_source(rows, "features.flags", features=("flags",), targets=())
 
     def test_rejects_outputs_sources_at_tensorization_layer(self):
         with self.assertRaisesRegex(ConfigError, "cannot be tensorized"):

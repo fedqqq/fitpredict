@@ -98,6 +98,43 @@ class BindingEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, 'metric.bindings.score source "outputs.missing"'):
             engine.build_kwargs({"score": binding("outputs.missing")}, path="metric.bindings")
 
+    def test_builds_metric_kwargs_from_single_output_and_auxiliary_feature(self):
+        output = torch.tensor([0.2, 0.8])
+        segment = torch.tensor([1, 1])
+        labels = torch.tensor([0, 1])
+        context = RuntimeSourceContext(
+            features={"segment": segment},
+            targets={"label": labels},
+            outputs=output,
+        )
+
+        kwargs = build_bound_kwargs(
+            {
+                "y_pred": binding("outputs"),
+                "y_true": binding("targets.label"),
+                "segment": binding("features.segment"),
+            },
+            context,
+            features=("segment",),
+            targets=("label",),
+            path="evaluation.metrics[0].bindings",
+        )
+
+        self.assertIs(kwargs["y_pred"], output)
+        self.assertIs(kwargs["y_true"], labels)
+        self.assertIs(kwargs["segment"], segment)
+
+    def test_rejects_single_output_binding_for_dict_output_model(self):
+        context = RuntimeSourceContext(
+            features={},
+            targets={},
+            outputs={"logits": torch.tensor([1.0])},
+        )
+        engine = BindingEngine(context)
+
+        with self.assertRaisesRegex(ConfigError, "use outputs.<name>"):
+            engine.build_kwargs({"prediction": binding("outputs")}, path="training.objectives[0].bindings")
+
 
 if __name__ == "__main__":
     unittest.main()

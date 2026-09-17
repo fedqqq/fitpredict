@@ -230,6 +230,8 @@ def _validate_lifecycle_config(config: ExperimentConfig) -> None:
         raise ConfigError("saving.save_best requires a non-empty validation split.")
     if config.data.test_size and config.saving.save_best is None:
         raise ConfigError("a non-empty test split requires saving.save_best.")
+    if config.saving.save_best is not None and config.saving.save_best.monitor.startswith("test."):
+        raise ConfigError("saving.save_best.monitor cannot reference test metrics.")
     scheduler = config.training.scheduler
     if scheduler is not None and scheduler.monitor is not None:
         if scheduler.monitor.startswith("test."):
@@ -569,7 +571,10 @@ def _build_model_context(
         targets=config.data.targets,
         path=context_path,
     ).build_kwargs(config.model.inputs, path="model.inputs")
-    outputs = model(**model_kwargs)
+    try:
+        outputs = model(**model_kwargs)
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise ConfigError(f"could not call model with model.inputs bindings: {exc}") from exc
     return RuntimeSourceContext(
         features=base_context.features,
         targets=base_context.targets,
@@ -855,7 +860,7 @@ def _bound_or_default_kwargs(
 def _call_runtime_callable(callable_obj: Any, kwargs: Mapping[str, Any], *, path: str) -> Any:
     try:
         return callable_obj(**dict(kwargs))
-    except TypeError as exc:
+    except (TypeError, ValueError, RuntimeError) as exc:
         raise ConfigError(f"could not call {path}: {exc}") from exc
 
 

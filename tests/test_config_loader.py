@@ -232,6 +232,16 @@ class ConfigLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "duplicate config key 'data'"):
                 loads_config("data: {}\ndata: {}\n", format="yaml")
 
+    def test_empty_yaml_is_diagnostic_when_yaml_available(self):
+        try:
+            import yaml  # noqa: F401
+        except ModuleNotFoundError:
+            with self.assertRaisesRegex(ConfigError, "PyYAML is not installed"):
+                loads_config("", format="yaml")
+        else:
+            with self.assertRaisesRegex(ConfigError, "empty; expected a top-level mapping"):
+                loads_config("", format="yaml")
+
 
 if __name__ == "__main__":
     unittest.main()

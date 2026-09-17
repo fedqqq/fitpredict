@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from fitpredict import predict
+from fitpredict import fit, predict
 
 
 class OrderedFeatureModel(torch.nn.Module):
@@ -162,6 +162,51 @@ class PredictTests(unittest.TestCase):
             predictions = predict(config, checkpoint=checkpoint)
 
         torch.testing.assert_close(predictions, torch.tensor([14.0, 21.0]))
+
+    def test_predict_runs_full_inference_lifecycle_from_trained_best_checkpoint(self):
+        train_rows = [
+            {"x": 1.0, "label": 2.0},
+            {"x": 2.0, "label": 4.0},
+        ]
+        predict_rows = [
+            {"x": 4.0},
+            {"x": 5.0},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            data_path = temp_path / "train.json"
+            output_dir = temp_path / "runs"
+            data_path.write_text(json.dumps(train_rows), encoding="utf-8")
+            config = _config(
+                data_path,
+                model_class=f"{__name__}:WeightedModel",
+                features=["x"],
+            )
+            config["data"]["split"] = {
+                "train": 0.5,
+                "val": 0.5,
+                "test": 0.0,
+                "shuffle": False,
+            }
+            config["training"]["shuffle"] = False
+            config["training"]["optimizer"] = {
+                "name": "SGD",
+                "params": {"lr": 0.5},
+            }
+            config["saving"] = {
+                "save_last": True,
+                "save_best": {"monitor": "val.loss", "mode": "min"},
+                "output_dir": str(output_dir),
+            }
+
+            result = fit(config)
+            predictions = predict(
+                config,
+                checkpoint=result.checkpoint_paths["best"],
+                data=predict_rows,
+            )
+
+        torch.testing.assert_close(predictions, torch.tensor([8.0, 10.0]))
 
     def test_predict_empty_rows_return_none(self):
         rows = []
