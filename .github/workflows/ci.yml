@@ -32,7 +32,20 @@ jobs:
         run: python -m ruff check --select E9,F fitpredict tests
 
       - name: Run tests
-        run: python -m pytest -q
+        run: |
+          set +e
+          python -m pytest -q > pytest.log 2>&1
+          status=$?
+          cat pytest.log
+          if [ "$status" -ne 0 ]; then
+            python - <<'PY'
+          from pathlib import Path
+          text = Path("pytest.log").read_text(errors="replace")[-3500:]
+          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=pytest failed::{text}")
+          PY
+            exit "$status"
+          fi
 
       - name: Syntax check
         run: python -m compileall -q fitpredict tests
